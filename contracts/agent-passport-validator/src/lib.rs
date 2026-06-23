@@ -61,6 +61,16 @@ pub enum Error {
     NullifierUsed = 4,
     /// The Groth16 proof did not verify against the embedded key.
     InvalidProof = 5,
+    /// The proof's `registryRoot` is not in the attested allow-list. Without
+    /// this check, a prover could build their own Merkle tree and forge
+    /// membership — see issue #1.
+    UnknownRegistryRoot = 6,
+    /// `accept_admin` was called but no transfer is pending.
+    NoPendingAdmin = 7,
+    /// `authorize_spend` for an agent that holds no passport (#10).
+    NotRegistered = 8,
+    /// The requested spend would exceed the agent's proven spend cap (#10).
+    SpendCapExceeded = 9,
 }
 
 #[contracttype]
@@ -77,11 +87,19 @@ pub struct Attestation {
 #[contracttype]
 enum DataKey {
     Admin,
+    /// Proposed next admin, pending its own `accept_admin` (two-step transfer).
+    PendingAdmin,
     Verifier,
+    /// Operational role allowed to record spends (#10). Defaults to Admin.
+    Settler,
+    /// A registry root the contract will accept (presence == allowed).
+    RegistryRoot(U256),
     /// nullifierHash -> spent (presence == spent).
     Nullifier(U256),
     /// agentId -> latest attestation.
     Passport(U256),
+    /// agentId -> cumulative amount already authorized against its spend cap (#10).
+    Spent(U256),
 }
 
 #[contract]
@@ -89,15 +107,19 @@ pub struct AgentPassportValidator;
 
 #[contractimpl]
 impl AgentPassportValidator {
-    /// One-time wiring: who can re-point the verifier, and the verifier's
-    /// contract address. Panics on a second call.
-    pub fn init(env: Env, admin: Address, verifier: Address) {
+    /// One-time wiring: who can administer the contract, the verifier's
+    /// contract address, and the first attested `registry_root` the contract
+    /// will accept proofs against. Panics on a second call.
+    pub fn init(env: Env, admin: Address, verifier: Address, registry_root: U256) {
         let storage = env.storage().instance();
         if storage.has(&DataKey::Admin) {
             panic_with_error!(&env, Error::AlreadyInitialized);
         }
         storage.set(&DataKey::Admin, &admin);
         storage.set(&DataKey::Verifier, &verifier);
+        storage.set(&DataKey::RegistryRoot(registry_root.clone()), &true);
+        env.events()
+            .publish((symbol_short!("root_add"),), registry_root);
     }
 
     /// Verify a passport proof and, if sound and unspent, mint the attestation.
@@ -118,6 +140,18 @@ impl AgentPassportValidator {
         let agent_id = public_inputs.get_unchecked(IDX_AGENT_ID);
         let registry_root = public_inputs.get_unchecked(0);
         let spend_cap = public_inputs.get_unchecked(IDX_SPEND_CAP);
+
+        // (0) personhood — the proof only attests membership in the tree whose
+        // root is `registry_root`, but the prover supplies that root. Unless we
+        // pin it to an attested allow-list, anyone can prove membership in a
+        // tree they built themselves. Reject before the (costly) pairing check.
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::RegistryRoot(registry_root.clone()))
+        {
+            return Err(Error::UnknownRegistryRoot);
+        }
 
         // (1) anti-replay / anti-Sybil — reject a nullifier we've already seen.
         let persistent = env.storage().persistent();
@@ -197,15 +231,188 @@ impl AgentPassportValidator {
     }
 
     /// Admin-only: re-point to a new verifier (e.g. after a circuit upgrade).
+    /// Emits a `verifier` event (old, new) so the swap is observable on-chain.
     pub fn set_verifier(env: Env, verifier: Address) -> Result<(), Error> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Verifier, &verifier);
+        require_admin(&env)?;
+        let instance = env.storage().instance();
+        let old: Address = instance.get(&DataKey::Verifier).ok_or(Error::NotInitialized)?;
+        instance.set(&DataKey::Verifier, &verifier);
+        env.events()
+            .publish((symbol_short!("verifier"),), (old, verifier));
         Ok(())
+    }
+
+    // ---- registry-root allow-list (#1) ---------------------------------
+
+    /// True iff proofs against this `registry_root` are currently accepted.
+    pub fn is_registry_root_allowed(env: Env, registry_root: U256) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::RegistryRoot(registry_root))
+    }
+
+    /// Admin-only: attest an additional registry root.
+    pub fn add_registry_root(env: Env, registry_root: U256) -> Result<(), Error> {
+        require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::RegistryRoot(registry_root.clone()), &true);
+        env.events()
+            .publish((symbol_short!("root_add"),), registry_root);
+        Ok(())
+    }
+
+    /// Admin-only: revoke a previously attested registry root.
+    pub fn remove_registry_root(env: Env, registry_root: U256) -> Result<(), Error> {
+        require_admin(&env)?;
+        env.storage()
+            .instance()
+            .remove(&DataKey::RegistryRoot(registry_root.clone()));
+        env.events()
+            .publish((symbol_short!("root_del"),), registry_root);
+        Ok(())
+    }
+
+    // ---- admin lifecycle (#6) ------------------------------------------
+
+    /// The current admin, if the contract is initialized and not renounced.
+    pub fn admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
+    }
+
+    /// Admin-only: propose a new admin. The transfer only takes effect once the
+    /// proposed account calls `accept_admin` (two-step, avoids fat-fingering an
+    /// unusable address).
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.events()
+            .publish((symbol_short!("admin_prp"),), new_admin);
+        Ok(())
+    }
+
+    /// Accept a pending admin transfer. Must be called (and authorized) by the
+    /// account named in `transfer_admin`.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let instance = env.storage().instance();
+        let pending: Address = instance
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::NoPendingAdmin)?;
+        pending.require_auth();
+        instance.set(&DataKey::Admin, &pending);
+        instance.remove(&DataKey::PendingAdmin);
+        env.events()
+            .publish((symbol_short!("admin_new"),), pending);
+        Ok(())
+    }
+
+    /// Admin-only: permanently renounce admin. After this the verifier and
+    /// registry roots are frozen — no one can change them again.
+    pub fn renounce_admin(env: Env) -> Result<(), Error> {
+        let admin = require_admin(&env)?;
+        let instance = env.storage().instance();
+        instance.remove(&DataKey::Admin);
+        instance.remove(&DataKey::PendingAdmin);
+        env.events().publish((symbol_short!("admin_rnc"),), admin);
+        Ok(())
+    }
+
+    // ---- on-chain spend gate (#10) -------------------------------------
+
+    /// The settle role allowed to record spends. Defaults to the admin until a
+    /// dedicated settler is configured.
+    pub fn settler(env: Env) -> Result<Address, Error> {
+        settler_addr(&env)
+    }
+
+    /// Admin-only: set the operational settle role (kept separate from admin so
+    /// a hot facilitator key can't change the verifier or roots).
+    pub fn set_settler(env: Env, settler: Address) -> Result<(), Error> {
+        require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Settler, &settler);
+        env.events()
+            .publish((symbol_short!("settler"),), settler);
+        Ok(())
+    }
+
+    /// Amount of an agent's proven spend cap that is still unspent.
+    pub fn remaining_cap(env: Env, agent_id: U256) -> Result<U256, Error> {
+        let passport: Attestation = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Passport(agent_id.clone()))
+            .ok_or(Error::NotRegistered)?;
+        let spent = spent_so_far(&env, &agent_id);
+        Ok(saturating_sub(&env, &passport.spend_cap, &spent))
+    }
+
+    /// Settle-gate entry point (the x402 facilitator calls this before settling
+    /// a payment). Records `amount` against the agent's proven spend cap,
+    /// rejecting any spend that would push the running total over the cap.
+    /// Returns the cap still remaining after this authorization.
+    pub fn authorize_spend(env: Env, agent_id: U256, amount: U256) -> Result<U256, Error> {
+        settler_addr(&env)?.require_auth();
+
+        let passport: Attestation = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Passport(agent_id.clone()))
+            .ok_or(Error::NotRegistered)?;
+
+        let spent = spent_so_far(&env, &agent_id);
+        let new_spent = spent.add(&amount);
+        if new_spent.gt(&passport.spend_cap) {
+            return Err(Error::SpendCapExceeded);
+        }
+
+        let persistent = env.storage().persistent();
+        let key = DataKey::Spent(agent_id.clone());
+        persistent.set(&key, &new_spent);
+        persistent.extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
+
+        let remaining = saturating_sub(&env, &passport.spend_cap, &new_spent);
+        env.events()
+            .publish((symbol_short!("spend"), agent_id), (amount, remaining.clone()));
+        Ok(remaining)
+    }
+}
+
+/// Load the admin and require its authorization, or surface `NotInitialized`
+/// (also the post-renounce state).
+fn require_admin(env: &Env) -> Result<Address, Error> {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(Error::NotInitialized)?;
+    admin.require_auth();
+    Ok(admin)
+}
+
+/// The configured settler, falling back to the admin when unset.
+fn settler_addr(env: &Env) -> Result<Address, Error> {
+    let instance = env.storage().instance();
+    match instance.get(&DataKey::Settler) {
+        Some(s) => Ok(s),
+        None => instance.get(&DataKey::Admin).ok_or(Error::NotInitialized),
+    }
+}
+
+fn spent_so_far(env: &Env, agent_id: &U256) -> U256 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Spent(agent_id.clone()))
+        .unwrap_or_else(|| U256::from_u32(env, 0))
+}
+
+/// `a - b`, clamped at zero (cap is always >= spent, but stay total).
+fn saturating_sub(env: &Env, a: &U256, b: &U256) -> U256 {
+    if a.gt(b) || a == b {
+        a.sub(b)
+    } else {
+        U256::from_u32(env, 0)
     }
 }
 

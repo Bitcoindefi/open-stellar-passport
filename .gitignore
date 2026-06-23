@@ -43,3 +43,6 @@ _vf_*.png
 _tts_test.wav
 skills-lock.json
 docs/ElevenLabs_*
+
+# Soroban test snapshots (generated)
+contracts/**/test_snapshots/

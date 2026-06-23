@@ -60,14 +60,21 @@ fn real_public_inputs(env: &Env) -> Vec<U256> {
     )
 }
 
-/// Deploy the real verifier WASM + our validator, init the wiring, return both.
+/// Deploy the real verifier WASM + our validator, init the wiring (attesting
+/// the real proof's registry root), return the client. `mock_all_auths` so
+/// admin-gated calls in tests don't need explicit signatures.
 fn setup(env: &Env) -> AgentPassportValidatorClient<'static> {
+    setup_with_admin(env).0
+}
+
+fn setup_with_admin(env: &Env) -> (AgentPassportValidatorClient<'static>, Address) {
+    env.mock_all_auths();
     let verifier_addr = env.register(verifier::WASM, ());
     let validator_addr = env.register(AgentPassportValidator, ());
     let client = AgentPassportValidatorClient::new(env, &validator_addr);
     let admin = Address::generate(env);
-    client.init(&admin, &verifier_addr);
-    client
+    client.init(&admin, &verifier_addr, &u256(env, PI_ROOT));
+    (client, admin)
 }
 
 #[test]
@@ -137,5 +144,105 @@ fn init_is_one_shot() {
     let admin = Address::generate(&env);
     let verifier_addr = Address::generate(&env);
     // Second init must panic with AlreadyInitialized.
-    client.init(&admin, &verifier_addr);
+    client.init(&admin, &verifier_addr, &u256(&env, PI_ROOT));
+}
+
+/// #1: a proof whose registryRoot isn't attested is rejected *before* the
+/// pairing check — defeats the "bring your own Merkle tree" forgery.
+#[test]
+fn rejects_unknown_registry_root() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    let mut inputs = real_public_inputs(&env);
+    // Swap in a root that was never attested (still a valid field element).
+    inputs.set(0, u256(&env, PI_NULLIFIER));
+
+    let res = client.try_verify_and_register(&real_proof(&env), &inputs);
+    assert_eq!(res, Err(Ok(Error::UnknownRegistryRoot)));
+    // Rejected before any state change.
+    assert!(!client.is_nullifier_used(&u256(&env, PI_NULLIFIER)));
+}
+
+/// #1: admin can attest and later revoke registry roots.
+#[test]
+fn admin_manages_registry_roots() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    let new_root = u256(&env, PI_AGENT);
+    assert!(!client.is_registry_root_allowed(&new_root));
+    client.add_registry_root(&new_root);
+    assert!(client.is_registry_root_allowed(&new_root));
+    client.remove_registry_root(&new_root);
+    assert!(!client.is_registry_root_allowed(&new_root));
+}
+
+/// #6: two-step admin transfer, then the old admin can no longer administer.
+#[test]
+fn two_step_admin_transfer() {
+    let env = Env::default();
+    let (client, old_admin) = setup_with_admin(&env);
+    let new_admin = Address::generate(&env);
+
+    assert_eq!(client.admin(), Some(old_admin.clone()));
+    client.transfer_admin(&new_admin);
+    // Not effective until accepted.
+    assert_eq!(client.admin(), Some(old_admin.clone()));
+    client.accept_admin();
+    assert_eq!(client.admin(), Some(new_admin));
+}
+
+/// #6: accepting with nothing pending is a typed error.
+#[test]
+fn accept_admin_without_pending_errs() {
+    let env = Env::default();
+    let client = setup(&env);
+    let res = client.try_accept_admin();
+    assert_eq!(res, Err(Ok(Error::NoPendingAdmin)));
+}
+
+/// #6: renounce freezes the verifier/roots permanently.
+#[test]
+fn renounce_freezes_admin() {
+    let env = Env::default();
+    let client = setup(&env);
+    client.renounce_admin();
+    assert_eq!(client.admin(), None);
+    let res = client.try_set_verifier(&Address::generate(&env));
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+/// #10: spends accumulate against the proven cap and are rejected past it.
+#[test]
+fn spend_gate_enforces_cap() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    // Mint the passport (cap = PI_CAP = 500_000_000).
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+    let agent_id = u256(&env, PI_AGENT);
+    let cap = u256(&env, PI_CAP);
+    assert_eq!(client.remaining_cap(&agent_id), cap);
+
+    // Spend 200M, then 200M more -> 400M used, 100M remaining.
+    let amount = U256::from_u32(&env, 200_000_000);
+    let rem = client.authorize_spend(&agent_id, &amount);
+    assert_eq!(rem, U256::from_u32(&env, 300_000_000));
+    client.authorize_spend(&agent_id, &amount);
+    assert_eq!(client.remaining_cap(&agent_id), U256::from_u32(&env, 100_000_000));
+
+    // A spend that would exceed the cap is rejected; state unchanged.
+    let res = client.try_authorize_spend(&agent_id, &amount);
+    assert_eq!(res, Err(Ok(Error::SpendCapExceeded)));
+    assert_eq!(client.remaining_cap(&agent_id), U256::from_u32(&env, 100_000_000));
+}
+
+/// #10: spending for an unregistered agent is a typed error.
+#[test]
+fn spend_for_unregistered_agent_errs() {
+    let env = Env::default();
+    let client = setup(&env);
+    let res = client.try_authorize_spend(&u256(&env, PI_AGENT), &U256::from_u32(&env, 1));
+    assert_eq!(res, Err(Ok(Error::NotRegistered)));
 }

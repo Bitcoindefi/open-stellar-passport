@@ -56,6 +56,17 @@ template AgentPassport(levels, balanceBits) {
     nf.out === nullifierHash;
 
     // 4. Proof of funds: balance >= spendCap
+    //
+    // SECURITY (#2): GreaterEqThan(n) is only sound when BOTH inputs are known
+    // to be in [0, 2^n). `spendCap` is a public input the prover controls and
+    // `balance` is a private witness — without an explicit range check a
+    // malicious witness can pick out-of-range values and wrap the comparison,
+    // proving solvency while insolvent. Constrain both to `balanceBits` bits.
+    component balCheck = Num2Bits(balanceBits);
+    balCheck.in <== balance;
+    component capCheck = Num2Bits(balanceBits);
+    capCheck.in <== spendCap;
+
     component geq = GreaterEqThan(balanceBits);
     geq.in[0] <== balance;
     geq.in[1] <== spendCap;

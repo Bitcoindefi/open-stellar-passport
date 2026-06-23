@@ -10,18 +10,21 @@ VERIFIER=$(tr -d '\r\n' < "$WIN/deploy/verifier-contract-id.txt")
 DEPLOYER=$(tr -d '\r\n' < "$WIN/deploy/deployer.txt")
 PROOF=$(tr -d '\r\n' < "$WIN/build/arg_proof.json")
 PUBLIC=$(tr -d '\r\n' < "$WIN/build/arg_public.json")
+# First public input is the registry root we attest at init (#1 allow-list).
+REGISTRY_ROOT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[0])' "$WIN/build/arg_public.json")
 
 echo "=== verifier:  $VERIFIER"
 echo "=== deployer:  $DEPLOYER"
+echo "=== root:      $REGISTRY_ROOT"
 
 echo "=== (1) deploy validator ==="
 VID=$(stellar contract deploy --wasm "$WASM" --source passport-deployer --network testnet 2>"$WIN/build/.deploy.err")
 echo "validator contract id: $VID"
 echo -n "$VID" > "$WIN/deploy/validator-contract-id.txt"
 
-echo "=== (2) init(admin=deployer, verifier) ==="
+echo "=== (2) init(admin=deployer, verifier, registry_root) ==="
 stellar contract invoke --id "$VID" --source passport-deployer --network testnet \
-  -- init --admin "$DEPLOYER" --verifier "$VERIFIER" 2>&1 | tail -3
+  -- init --admin "$DEPLOYER" --verifier "$VERIFIER" --registry_root "$REGISTRY_ROOT" 2>&1 | tail -3
 
 echo "=== (3) is_registered(42) BEFORE (expect false) ==="
 stellar contract invoke --id "$VID" --source passport-deployer --network testnet \
