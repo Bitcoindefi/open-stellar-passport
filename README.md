@@ -109,7 +109,84 @@ proves : publicKey = Poseidon2(privateKey, 0)
   - Run: `cd frontend && npm install && npm run dev`
 - [ ] Selective-disclosure view key + per-payment `amount ≤ cap` proof (stretch)
 
-## Build (Phase 0)
+## Portable build from source
+
+The legacy `scripts/wsl-*.sh` helpers still work for the original WSL layout,
+but the portable path is now the repository `Makefile`.
+
+```bash
+make check-build-tools
+make verify-committed-zk
+make build-contracts
+```
+
+Tooling:
+
+- Node.js + npm install the pinned `snarkjs` dependency from `package-lock.json`.
+- Rust + `rustup` build and test the Soroban validator crate.
+- `circom` 2.2.x is required only when recompiling `.circom` sources.
+- Stellar CLI is required only for release contract artifact parity, deployment,
+  and TypeScript binding generation.
+
+### ZK circuit artifacts
+
+`make verify-committed-zk` copies the committed browser artifacts from
+`frontend/public/zk/` into `build/`, exports the verification key from the
+committed zkey, compares it with `frontend/public/zk/verification_key.json`, and
+runs `node scripts/smoke.mjs` against those copied artifacts.
+
+To recompile the circuit sources:
+
+```bash
+make build-circuit
+```
+
+To run a fresh local Groth16 setup, provide the powers-of-tau file:
+
+```bash
+make circuit-setup POT14=/path/to/pot14_final.ptau ZKEY_ENTROPY="local entropy"
+```
+
+The resulting zkey is expected to differ from
+`frontend/public/zk/agent_passport_final.zkey` unless the original contribution
+transcript and entropy are reused. The committed zkey remains auditable through
+the `verify-committed-zk` target.
+
+### Soroban contract artifacts
+
+`make build-contracts` runs the validator unit tests, compiles the contract with
+the current Rust `wasm32v1-none` target, and writes the portable Cargo artifact
+to `build/contracts/agent_passport_validator.cargo.wasm`. The raw Cargo output
+can differ from the committed optimized deployment artifact, so the target prints
+a SHA-256 comparison instead of hiding the difference.
+
+For byte-for-byte release artifact parity, install Stellar CLI and run:
+
+```bash
+make build-contracts-stellar
+make build-verifier-contract
+```
+
+The verifier build target fetches Nethermind's
+`stellar-private-payments` into ignored `build/external/`, injects the committed
+verification key, and writes the built verifier WASM under `build/contracts/`.
+
+### Deployment and bindings
+
+Deployment targets are explicit and require a local Stellar identity name:
+
+```bash
+make deploy-verifier STELLAR_SOURCE=passport-deployer
+make deploy-validator STELLAR_SOURCE=passport-deployer
+make gen-bindings
+```
+
+`deploy-validator` reads `deploy/verifier-contract-id.txt`, writes
+`deploy/validator-contract-id.txt`, and initializes the validator. Set
+`STELLAR_ADMIN` to override the admin address; otherwise the address for
+`STELLAR_SOURCE` is used.
+
+## Build (Phase 0 legacy)
 
 ```bash
 # prerequisites: node, circom 2.2.x, snarkjs

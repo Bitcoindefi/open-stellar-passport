@@ -19,6 +19,7 @@ witness.wtns
 # Rust / Soroban
 target/
 *.wasm.d
+contracts/agent-passport-validator/test_snapshots/
 
 # Frontend dev logs
 frontend/vite.log
