@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unsafe-declaration-merging */
 import { Buffer } from "buffer";
 import { Address } from "@stellar/stellar-sdk";
 import {

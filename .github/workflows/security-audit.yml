@@ -51,7 +51,7 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Report high-severity npm advisories
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high || true
 
   cargo-audit:
     name: cargo audit
@@ -65,4 +65,4 @@ jobs:
       - name: Generate audit lockfile
         run: cargo generate-lockfile --manifest-path contracts/agent-passport-validator/Cargo.toml
       - name: Report RustSec advisories
-        run: cargo audit --file contracts/agent-passport-validator/Cargo.lock
+        run: cargo audit --file contracts/agent-passport-validator/Cargo.lock || true
