@@ -1,0 +1,68 @@
+name: Security audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/dependabot.yml"
+      - ".github/workflows/security-audit.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "sdk/package.json"
+      - "sdk/package-lock.json"
+      - "sdk/bindings/package.json"
+      - "sdk/bindings/package-lock.json"
+      - "contracts/agent-passport-validator/Cargo.toml"
+  schedule:
+    - cron: "17 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: npm audit (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - directory: "."
+            cache-dependency-path: "package-lock.json"
+          - directory: "frontend"
+            cache-dependency-path: "frontend/package-lock.json"
+          - directory: "sdk"
+            cache-dependency-path: "sdk/package-lock.json"
+          - directory: "sdk/bindings"
+            cache-dependency-path: "sdk/bindings/package-lock.json"
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ matrix.cache-dependency-path }}
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Report high-severity npm advisories
+        run: npm audit --audit-level=high
+
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Generate audit lockfile
+        run: cargo generate-lockfile --manifest-path contracts/agent-passport-validator/Cargo.toml
+      - name: Report RustSec advisories
+        run: cargo audit --file contracts/agent-passport-validator/Cargo.lock
