@@ -8,16 +8,12 @@
  */
 import * as snarkjs from "snarkjs";
 import { Buffer } from "buffer";
-import { Client, networks, Errors } from "./validatorClient";
-
-const RPC_URL = "https://soroban-testnet.stellar.org";
-// A funded testnet account used purely as the *source* for read-only
-// simulations (no signature, nothing is persisted).
-const VIEWER = "GC7SABHJPHM7ETSM6RJJOJL3NXJK2EJCY324HLXPMB53NZHISWIMSGBP";
+import { Client, Errors } from "./validatorClient";
+import { TESTNET_CONFIG } from "./testnetConfig";
 
 export const CONTRACTS = {
-  validator: networks.testnet.contractId,
-  verifier: "CCMKLYSRUH2HMA4UU6WLXWQXEY6KAH5AWB5BEVMJGNGC5GLGTVROLG4A",
+  validator: TESTNET_CONFIG.validatorContractId,
+  verifier: TESTNET_CONFIG.verifierContractId,
 };
 
 // Prefix with Vite's base URL so assets resolve under a sub-path deploy
@@ -48,7 +44,13 @@ export interface MintedProof extends SorobanProof {
 
 export interface OnChainResult {
   ok: boolean;
-  attestation?: { agent_id: string; nullifier: string; registry_root: string; spend_cap: string; ledger: number };
+  attestation?: {
+    agent_id: string;
+    nullifier: string;
+    registry_root: string;
+    spend_cap: string;
+    ledger: number;
+  };
   error?: string;
 }
 
@@ -56,11 +58,20 @@ export interface OnChainResult {
 
 const rndField = () =>
   BigInt(
-    "0x" + [...crypto.getRandomValues(new Uint8Array(28))].map((b) => b.toString(16).padStart(2, "0")).join(""),
+    "0x" +
+      [...crypto.getRandomValues(new Uint8Array(28))]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(""),
   ).toString();
 
 /** A friendly, displayable agent id (still a valid field element). */
-const rndAgentId = () => (BigInt("0x" + [...crypto.getRandomValues(new Uint8Array(5))].map((b) => b.toString(16).padStart(2, "0")).join(""))).toString();
+const rndAgentId = () =>
+  BigInt(
+    "0x" +
+      [...crypto.getRandomValues(new Uint8Array(5))]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(""),
+  ).toString();
 
 const be32 = (dec: string | bigint) => {
   const h = BigInt(dec).toString(16);
@@ -68,13 +79,20 @@ const be32 = (dec: string | bigint) => {
   return h.padStart(64, "0");
 };
 const g1 = (p: string[]) => be32(p[0]) + be32(p[1]);
-const g2 = (p: string[][]) => be32(p[0][1]) + be32(p[0][0]) + be32(p[1][1]) + be32(p[1][0]);
+const g2 = (p: string[][]) =>
+  be32(p[0][1]) + be32(p[0][0]) + be32(p[1][1]) + be32(p[1][0]);
 const buf = (hex: string) => Buffer.from(hex, "hex");
 
-const fetchBytes = async (url: string) => new Uint8Array(await (await fetch(url)).arrayBuffer());
+const fetchBytes = async (url: string) =>
+  new Uint8Array(await (await fetch(url)).arrayBuffer());
 
-function toSoroban(raw: snarkjs.Groth16Proof, publicSignals: string[]): SorobanProof {
-  const a = g1(raw.pi_a), b = g2(raw.pi_b), c = g1(raw.pi_c);
+function toSoroban(
+  raw: snarkjs.Groth16Proof,
+  publicSignals: string[],
+): SorobanProof {
+  const a = g1(raw.pi_a),
+    b = g2(raw.pi_b),
+    c = g1(raw.pi_c);
   return {
     proof: { a: buf(a), b: buf(b), c: buf(c) },
     proofHex: { a, b, c },
@@ -83,7 +101,10 @@ function toSoroban(raw: snarkjs.Groth16Proof, publicSignals: string[]): SorobanP
 }
 
 function errName(code: number): string {
-  return (Errors as Record<number, { message: string }>)[code]?.message ?? `Error #${code}`;
+  return (
+    (Errors as Record<number, { message: string }>)[code]?.message ??
+    `Error #${code}`
+  );
 }
 
 function parseContractError(e: unknown): string {
@@ -93,11 +114,11 @@ function parseContractError(e: unknown): string {
   return s.length > 140 ? s.slice(0, 140) + "…" : s;
 }
 
-function client(publicKey = VIEWER) {
+function client(publicKey = TESTNET_CONFIG.viewerPublicKey) {
   return new Client({
     contractId: CONTRACTS.validator,
-    networkPassphrase: networks.testnet.networkPassphrase,
-    rpcUrl: RPC_URL,
+    networkPassphrase: TESTNET_CONFIG.networkPassphrase,
+    rpcUrl: TESTNET_CONFIG.rpcUrl,
     publicKey,
     allowHttp: true,
   });
@@ -118,16 +139,36 @@ export async function mintPassport(spendCap: string): Promise<MintedProof> {
 
   const witnessWasm = await fetchBytes(ART.witness);
   const o = { type: "mem" } as object;
-  await snarkjs.wtns.calculate({ privateKey, agentId, pathElements, pathIndices }, witnessWasm, o);
+  await snarkjs.wtns.calculate(
+    { privateKey, agentId, pathElements, pathIndices },
+    witnessWasm,
+    o,
+  );
   const w = await snarkjs.wtns.exportJson(o);
   const registryRoot = w[1].toString();
   const nullifierHash = w[2].toString();
 
-  const [circuitWasm, zkey] = await Promise.all([fetchBytes(ART.circuit), fetchBytes(ART.zkey)]);
-  const input = { registryRoot, nullifierHash, agentId, spendCap, privateKey, balance, pathElements, pathIndices };
+  const [circuitWasm, zkey] = await Promise.all([
+    fetchBytes(ART.circuit),
+    fetchBytes(ART.zkey),
+  ]);
+  const input = {
+    registryRoot,
+    nullifierHash,
+    agentId,
+    spendCap,
+    privateKey,
+    balance,
+    pathElements,
+    pathIndices,
+  };
 
   const t0 = performance.now();
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, circuitWasm, zkey);
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    circuitWasm,
+    zkey,
+  );
   const provingMs = Math.round(performance.now() - t0);
 
   const vk = await (await fetch(ART.vk)).json();
@@ -135,8 +176,13 @@ export async function mintPassport(spendCap: string): Promise<MintedProof> {
 
   return {
     ...toSoroban(proof, publicSignals),
-    agentId, spendCap, registryRoot, nullifierHash,
-    raw: proof, offChainValid, provingMs,
+    agentId,
+    spendCap,
+    registryRoot,
+    nullifierHash,
+    raw: proof,
+    offChainValid,
+    provingMs,
   };
 }
 
@@ -149,12 +195,28 @@ export async function verifyOnChain(p: SorobanProof): Promise<OnChainResult> {
     });
     const r = tx.result as unknown as {
       isOk: () => boolean;
-      unwrap: () => { agent_id: bigint; nullifier: bigint; registry_root: bigint; spend_cap: bigint; ledger: number };
+      unwrap: () => {
+        agent_id: bigint;
+        nullifier: bigint;
+        registry_root: bigint;
+        spend_cap: bigint;
+        ledger: number;
+      };
       unwrapErr: () => { message?: string };
     };
     if (r.isOk()) {
       const a = r.unwrap();
-      return { ok: true, attestation: { ...a, agent_id: String(a.agent_id), nullifier: String(a.nullifier), registry_root: String(a.registry_root), spend_cap: String(a.spend_cap), ledger: Number(a.ledger) } };
+      return {
+        ok: true,
+        attestation: {
+          ...a,
+          agent_id: String(a.agent_id),
+          nullifier: String(a.nullifier),
+          registry_root: String(a.registry_root),
+          spend_cap: String(a.spend_cap),
+          ledger: Number(a.ledger),
+        },
+      };
     }
     return { ok: false, error: r.unwrapErr()?.message ?? "InvalidProof" };
   } catch (e) {
@@ -166,7 +228,10 @@ export async function verifyOnChain(p: SorobanProof): Promise<OnChainResult> {
 export async function commitOnChain(
   p: SorobanProof,
   publicKey: string,
-  signTransaction: (xdr: string, opts?: object) => Promise<{ signedTxXdr: string }>,
+  signTransaction: (
+    xdr: string,
+    opts?: object,
+  ) => Promise<{ signedTxXdr: string }>,
 ): Promise<{ ok: boolean; hash?: string; error?: string }> {
   try {
     const tx = await client(publicKey).verify_and_register({
@@ -175,9 +240,14 @@ export async function commitOnChain(
     });
     const sent = await tx.signAndSend({
       // adapt Freighter's signer to the contract client's expected shape
-      signTransaction: async (xdr: string, opts?: object) => signTransaction(xdr, opts),
+      signTransaction: async (xdr: string, opts?: object) =>
+        signTransaction(xdr, opts),
     });
-    return { ok: true, hash: (sent as { sendTransactionResponse?: { hash?: string } }).sendTransactionResponse?.hash };
+    return {
+      ok: true,
+      hash: (sent as { sendTransactionResponse?: { hash?: string } })
+        .sendTransactionResponse?.hash,
+    };
   } catch (e) {
     return { ok: false, error: parseContractError(e) };
   }
@@ -188,11 +258,19 @@ export async function isRegistered(agentId: string): Promise<boolean> {
   return tx.result;
 }
 
-export async function getPassport(agentId: string): Promise<OnChainResult["attestation"] | undefined> {
+export async function getPassport(
+  agentId: string,
+): Promise<OnChainResult["attestation"] | undefined> {
   const tx = await client().get_passport({ agent_id: BigInt(agentId) });
   const a = tx.result;
   if (!a) return undefined;
-  return { agent_id: String(a.agent_id), nullifier: String(a.nullifier), registry_root: String(a.registry_root), spend_cap: String(a.spend_cap), ledger: Number(a.ledger) };
+  return {
+    agent_id: String(a.agent_id),
+    nullifier: String(a.nullifier),
+    registry_root: String(a.registry_root),
+    spend_cap: String(a.spend_cap),
+    ledger: Number(a.ledger),
+  };
 }
 
 /**
@@ -204,7 +282,8 @@ export async function authorizePayment(
   amount: string,
 ): Promise<{ authorized: boolean; reason: string; cap?: string }> {
   const passport = await getPassport(agentId);
-  if (!passport) return { authorized: false, reason: "No passport — agent not verified" };
+  if (!passport)
+    return { authorized: false, reason: "No passport — agent not verified" };
   const ok = BigInt(passport.spend_cap) >= BigInt(amount);
   return {
     authorized: ok,
