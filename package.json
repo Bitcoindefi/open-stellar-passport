@@ -4,9 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build:circuit": "make build-circuit",
-    "build:contracts": "make build-contracts",
-    "verify:zk": "make verify-committed-zk"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
