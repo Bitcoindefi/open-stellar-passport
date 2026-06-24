@@ -7,8 +7,9 @@ extern crate std;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
-    Bytes, BytesN, Env, U256,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _},
+    vec, Bytes, BytesN, Env, IntoVal, U256,
 };
 
 // Real proof bytes (G1 = x||y, G2 = x.c1||x.c0||y.c1||y.c0) from build/arg_proof.json.
@@ -62,12 +63,16 @@ fn real_public_inputs(env: &Env) -> Vec<U256> {
 
 /// Deploy the real verifier WASM + our validator, init the wiring, return both.
 fn setup(env: &Env) -> AgentPassportValidatorClient<'static> {
+    setup_with_id(env).0
+}
+
+fn setup_with_id(env: &Env) -> (AgentPassportValidatorClient<'static>, Address) {
     let verifier_addr = env.register(verifier::WASM, ());
     let validator_addr = env.register(AgentPassportValidator, ());
     let client = AgentPassportValidatorClient::new(env, &validator_addr);
     let admin = Address::generate(env);
     client.init(&admin, &verifier_addr);
-    client
+    (client, validator_addr)
 }
 
 #[test]
@@ -92,6 +97,35 @@ fn registers_a_valid_passport() {
 }
 
 #[test]
+fn typed_passport_registered_event_keeps_legacy_shape() {
+    let env = Env::default();
+    let (client, validator_addr) = setup_with_id(&env);
+    let agent_id = u256(&env, PI_AGENT);
+    let nullifier = u256(&env, PI_NULLIFIER);
+    let spend_cap = u256(&env, PI_CAP);
+
+    let _typed_event = PassportRegistered {
+        agent_id: agent_id.clone(),
+        nullifier: nullifier.clone(),
+        spend_cap: spend_cap.clone(),
+    };
+
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                validator_addr,
+                (symbol_short!("passport"), agent_id).into_val(&env),
+                (nullifier, spend_cap).into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
 fn rejects_nullifier_replay() {
     let env = Env::default();
     let client = setup(&env);
@@ -111,7 +145,10 @@ fn rejects_tampered_public_input() {
 
     // Tamper the spend cap; the proof no longer matches -> InvalidProof.
     let mut inputs = real_public_inputs(&env);
-    inputs.set(IDX_SPEND_CAP, u256(&env, PI_CAP).add(&U256::from_u32(&env, 1)));
+    inputs.set(
+        IDX_SPEND_CAP,
+        u256(&env, PI_CAP).add(&U256::from_u32(&env, 1)),
+    );
 
     let res = client.try_verify_and_register(&real_proof(&env), &inputs);
     assert_eq!(res, Err(Ok(Error::InvalidProof)));

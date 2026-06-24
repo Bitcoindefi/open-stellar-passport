@@ -17,8 +17,8 @@
 //!   [0] registryRoot   [1] nullifierHash   [2] agentId   [3] spendCap
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    BytesN, Env, U256, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
+    BytesN, Env, Vec, U256,
 };
 
 /// Generates a typed client for the already-deployed verifier straight from its
@@ -72,6 +72,15 @@ pub struct Attestation {
     pub spend_cap: U256,
     /// Ledger sequence at which the passport was minted.
     pub ledger: u32,
+}
+
+#[contractevent(topics = ["passport"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PassportRegistered {
+    #[topic]
+    pub agent_id: U256,
+    pub nullifier: U256,
+    pub spend_cap: U256,
 }
 
 #[contracttype]
@@ -159,26 +168,24 @@ impl AgentPassportValidator {
         persistent.set(&pass_key, &attestation);
         persistent.extend_ttl(&pass_key, TTL_THRESHOLD, TTL_BUMP);
 
-        env.events().publish(
-            (symbol_short!("passport"), agent_id),
-            (nullifier, spend_cap),
-        );
+        PassportRegistered {
+            agent_id,
+            nullifier,
+            spend_cap,
+        }
+        .publish(&env);
 
         Ok(attestation)
     }
 
     /// True iff `agent_id` holds a minted zk-passport.
     pub fn is_registered(env: Env, agent_id: U256) -> bool {
-        env.storage()
-            .persistent()
-            .has(&DataKey::Passport(agent_id))
+        env.storage().persistent().has(&DataKey::Passport(agent_id))
     }
 
     /// Fetch the stored attestation for an agent, if any.
     pub fn get_passport(env: Env, agent_id: U256) -> Option<Attestation> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Passport(agent_id))
+        env.storage().persistent().get(&DataKey::Passport(agent_id))
     }
 
     /// True iff this nullifier has already been spent.
