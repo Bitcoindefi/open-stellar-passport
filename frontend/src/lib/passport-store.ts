@@ -41,7 +41,7 @@ export class PassportStore {
     }
   }
 
-  revokePassport(agentId: string, reason: string): void {
+  revokePassport(agentId: string): void {
     const state = this.cbStates.get(agentId);
     if (!state) return;
     state.revoked = true;
@@ -93,7 +93,7 @@ export class PassportStore {
     if (cbState) {
       cbState.failures++;
       if (cbState.failures >= config!.circuitBreaker!.maxConsecutiveFailures) {
-        this.revokePassport(agentId, "circuit_breaker_tripped");
+        this.revokePassport(agentId);
         return { ok: false, reason: "circuit_breaker_tripped" };
       }
     }
@@ -108,7 +108,7 @@ export class PassportStore {
     if (!cbState) return { ok: false, reason: "daily_limit_exceeded" };
     cbState.failures++;
     if (cbState.failures >= config.circuitBreaker!.maxConsecutiveFailures) {
-      this.revokePassport(agentId, "circuit_breaker_tripped");
+      this.revokePassport(agentId);
       return { ok: false, reason: "circuit_breaker_tripped" };
     }
     return { ok: false, reason: "exceeds_spend_limit" };
