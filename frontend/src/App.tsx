@@ -41,6 +41,10 @@ import {
 const EXPLORER = (id: string) => `https://stellar.expert/explorer/testnet/contract/${id}`;
 const REPO = "https://github.com/leocagli/open-stellar-passport";
 const toStroops = (xlm: number) => BigInt(Math.round(xlm * 1e7)).toString();
+const SPEND_CAP_MIN = 5;
+const SPEND_CAP_MAX = 500;
+const SPEND_CAP_STEP = 5;
+const SPEND_CAP_INPUT_ID = "spend-cap";
 
 interface PayResult {
   authorized: boolean;
@@ -359,21 +363,27 @@ function StepMint({
   return (
     <StepShell n={1} title="Mint a passport" desc="Pick a spend cap. The owner secret and balance are generated and proven right here." active={!minted} done={!!minted}>
       <div className="flex flex-wrap items-end gap-4">
-        <label className="min-w-[200px] flex-1">
-          <span className="mb-2 flex items-center justify-between text-xs text-muted">
+        <div className="min-w-[200px] flex-1">
+          <label htmlFor={SPEND_CAP_INPUT_ID} className="mb-2 flex items-center justify-between text-xs text-muted">
             <span>Spend cap</span>
             <span className="font-mono text-cyan">{cap} XLM</span>
-          </span>
+          </label>
           <input
+            id={SPEND_CAP_INPUT_ID}
             type="range"
-            min={5}
-            max={500}
-            step={5}
+            min={SPEND_CAP_MIN}
+            max={SPEND_CAP_MAX}
+            step={SPEND_CAP_STEP}
             value={cap}
+            aria-label="Spend cap (XLM)"
+            aria-valuemin={SPEND_CAP_MIN}
+            aria-valuemax={SPEND_CAP_MAX}
+            aria-valuenow={cap}
+            aria-valuetext={`${cap} XLM`}
             onChange={(e) => setCap(Number(e.target.value))}
             className="w-full accent-[#0a0a0a]"
           />
-        </label>
+        </div>
         <Button onClick={onMint} loading={proving}>
           {proving ? "Proving" : minted ? "Re-generate" : "Generate proof"}
           {!proving && <ArrowRight width={16} height={16} />}
