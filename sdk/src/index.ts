@@ -5,7 +5,7 @@
  * a zero-knowledge credential that gates autonomous AI-agent payments on
  * Stellar without revealing the operator's identity or balance.
  */
-export { AgentPassport, authorizePassportSpend, type AgentPassportConfig, type SpendLimits } from "./passport.js";
+export { AgentPassport, authorizePassportSpend, type AgentPassportConfig, type CircuitBreakerConfig, type SpendLimits } from "./passport.js";
 export {
   createDelegationToken,
   verifyDelegationToken,
