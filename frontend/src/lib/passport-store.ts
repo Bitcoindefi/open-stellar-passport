@@ -63,6 +63,7 @@ export class PassportStore {
     const hasLimits = !!(config?.spendLimits?.dailyMaxXlm || config?.spendLimits?.weeklyMaxXlm);
 
     if (hasLimits) {
+      const sl = config.spendLimits!;
       const dayStart = utcDayStart(now);
       const weekStart = utcWeekStart(now);
 
@@ -74,12 +75,12 @@ export class PassportStore {
         .filter((e) => e.agentId === agentId && e.ok && e.timestamp >= weekStart)
         .reduce((s, e) => s + e.amount, 0);
 
-      if (config.spendLimits.dailyMaxXlm != null && daySum + amount > config.spendLimits.dailyMaxXlm) {
+      if (sl.dailyMaxXlm != null && daySum + amount > sl.dailyMaxXlm) {
         this.events.push({ agentId, amount, ok: false, timestamp: now });
         return this.fail(agentId, cbState, config);
       }
 
-      if (config.spendLimits.weeklyMaxXlm != null && weekSum + amount > config.spendLimits.weeklyMaxXlm) {
+      if (sl.weeklyMaxXlm != null && weekSum + amount > sl.weeklyMaxXlm) {
         this.events.push({ agentId, amount, ok: false, timestamp: now });
         return this.fail(agentId, cbState, config);
       }
