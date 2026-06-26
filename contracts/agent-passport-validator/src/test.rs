@@ -92,6 +92,104 @@ fn registers_a_valid_passport() {
 }
 
 #[test]
+fn verifies_a_batch_of_passports() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    // Create 3 valid inputs with different agent IDs (and thus different nullifiers for this test's simplicity,
+    // though real nullifiers depend on privateKey too). To keep it simple, we'll just use 3 different agent IDs.
+    let mut inputs = Vec::new(&env);
+
+    for i in 0..3 {
+        let mut pi = real_public_inputs(&env);
+        // agentId is at index 2.
+        let agent_id = U256::from_u32(&env, 100 + i);
+        pi.set(IDX_AGENT_ID, agent_id.clone());
+        // We also need a unique nullifier to avoid NullifierUsed error.
+        pi.set(IDX_NULLIFIER, U256::from_u32(&env, 1000 + i));
+
+        inputs.push_back(VerifyInput {
+            proof: real_proof(&env),
+            public_inputs: pi,
+        });
+    }
+
+    // In this test, real_proof won't actually match the modified public_inputs (agentId/nullifier),
+    // because the circuit binds them. So we expect InvalidProof for all unless we had real proofs.
+    // However, we can test that they are processed.
+    let results = client.verify_batch(&inputs);
+
+    assert_eq!(results.len(), 3);
+    for r in results.iter() {
+        assert!(!r.success);
+        assert_eq!(r.error, Some(Symbol::new(&env, "InvalidProof")));
+    }
+}
+
+#[test]
+fn mixed_batch_results() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    let mut inputs = Vec::new(&env);
+
+    // 1. Valid proof
+    inputs.push_back(VerifyInput {
+        proof: real_proof(&env),
+        public_inputs: real_public_inputs(&env),
+    });
+
+    // 2. Invalid proof (tampered public input, but unique nullifier)
+    let mut tampered_pi = real_public_inputs(&env);
+    tampered_pi.set(IDX_SPEND_CAP, U256::from_u32(&env, 999));
+    tampered_pi.set(IDX_NULLIFIER, U256::from_u32(&env, 9999));
+    inputs.push_back(VerifyInput {
+        proof: real_proof(&env),
+        public_inputs: tampered_pi,
+    });
+
+    // 3. Replay (same as 1)
+    inputs.push_back(VerifyInput {
+        proof: real_proof(&env),
+        public_inputs: real_public_inputs(&env),
+    });
+
+    let results = client.verify_batch(&inputs);
+
+    assert_eq!(results.len(), 3);
+
+    // First should succeed
+    assert!(results.get(0).unwrap().success);
+
+    // Second should fail with InvalidProof
+    let res1 = results.get(1).unwrap();
+    assert!(!res1.success);
+    assert_eq!(res1.error, Some(Symbol::new(&env, "InvalidProof")));
+
+    // Third should fail with NullifierUsed
+    let res2 = results.get(2).unwrap();
+    assert!(!res2.success);
+    assert_eq!(res2.error, Some(Symbol::new(&env, "NullifierUsed")));
+}
+
+#[test]
+fn rejects_batch_too_large() {
+    let env = Env::default();
+    let client = setup(&env);
+
+    let mut inputs = Vec::new(&env);
+    for _ in 0..9 {
+        inputs.push_back(VerifyInput {
+            proof: real_proof(&env),
+            public_inputs: real_public_inputs(&env),
+        });
+    }
+
+    let res = client.try_verify_batch(&inputs);
+    assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
+}
+
+#[test]
 fn rejects_nullifier_replay() {
     let env = Env::default();
     let client = setup(&env);

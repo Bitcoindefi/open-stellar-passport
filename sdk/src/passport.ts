@@ -2,7 +2,13 @@
  * High-level Agent Passport SDK: prove client-side, then mint / read the
  * on-chain attestation through the typed AgentPassportValidator client.
  */
-import { Client, networks, type Attestation } from "../bindings/src/index.js";
+import {
+  Client,
+  networks,
+  type Attestation,
+  type VerifyInput,
+  type VerifyResult,
+} from "../bindings/src/index.js";
 import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 import {
   generatePassportProof,
@@ -43,6 +49,30 @@ export class AgentPassport {
   /** Prove the passport claims client-side (secrets never leave here). */
   prove(witness: PassportWitness): Promise<SorobanProof> {
     return generatePassportProof(witness, this.artifacts);
+  }
+
+  /**
+   * Verify multiple proofs in a single call (or multiple calls if > 8).
+   * Splits into chunks of 8 automatically to stay within Soroban limits.
+   * Returns results for all proofs; doesn't short-circuit on first failure.
+   */
+  async batchVerify(inputs: SorobanProof[]): Promise<VerifyResult[]> {
+    const BATCH_LIMIT = 8;
+    const allResults: VerifyResult[] = [];
+
+    for (let i = 0; i < inputs.length; i += BATCH_LIMIT) {
+      const chunk = inputs.slice(i, i + BATCH_LIMIT);
+      const verifyInputs: VerifyInput[] = chunk.map((p) => ({
+        proof: p.proof,
+        public_inputs: p.publicInputs.map((s) => BigInt(s)),
+      }));
+
+      const tx = await this.client.verify_batch({ proofs: verifyInputs });
+      const { result } = await tx.signAndSend();
+      allResults.push(...result.unwrap());
+    }
+
+    return allResults;
   }
 
   /**

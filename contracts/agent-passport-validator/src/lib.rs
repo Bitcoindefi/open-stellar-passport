@@ -18,7 +18,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    BytesN, Env, U256, Vec,
+    BytesN, Env, Symbol, U256, Vec,
 };
 
 /// Generates a typed client for the already-deployed verifier straight from its
@@ -32,7 +32,7 @@ mod verifier {
 /// imported one isn't exported) so SDKs/CLI can build the argument directly.
 /// Byte layout: G1 `a`/`c` = x||y (32B BE each); G2 `b` = x.c1||x.c0||y.c1||y.c0.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Groth16Proof {
     pub a: BytesN<64>,
     pub b: BytesN<128>,
@@ -61,6 +61,8 @@ pub enum Error {
     NullifierUsed = 4,
     /// The Groth16 proof did not verify against the embedded key.
     InvalidProof = 5,
+    /// Batch size exceeds the limit of 8.
+    BatchTooLarge = 6,
 }
 
 #[contracttype]
@@ -72,6 +74,21 @@ pub struct Attestation {
     pub spend_cap: U256,
     /// Ledger sequence at which the passport was minted.
     pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VerifyInput {
+    pub proof: Groth16Proof,
+    pub public_inputs: Vec<U256>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VerifyResult {
+    pub root: U256,
+    pub success: bool,
+    pub error: Option<Symbol>,
 }
 
 #[contracttype]
@@ -100,15 +117,11 @@ impl AgentPassportValidator {
         storage.set(&DataKey::Verifier, &verifier);
     }
 
-    /// Verify a passport proof and, if sound and unspent, mint the attestation.
-    ///
-    /// This is the load-bearing entry point: the proof *is* the authorization,
-    /// so no `require_auth` is needed — anyone relaying a valid, fresh proof
-    /// registers the agent. Returns the freshly stored [`Attestation`].
-    pub fn verify_and_register(
-        env: Env,
-        proof: Groth16Proof,
-        public_inputs: Vec<U256>,
+    /// Internal logic for verifying a single passport proof.
+    fn verify_internal(
+        env: &Env,
+        proof: &Groth16Proof,
+        public_inputs: &Vec<U256>,
     ) -> Result<Attestation, Error> {
         if public_inputs.len() != N_PUBLIC_INPUTS {
             return Err(Error::BadPublicInputs);
@@ -135,9 +148,9 @@ impl AgentPassportValidator {
             .ok_or(Error::NotInitialized)?;
         let client = verifier::Client::new(&env, &verifier_addr);
         let vproof = verifier::Groth16Proof {
-            a: proof.a,
-            b: proof.b,
-            c: proof.c,
+            a: proof.a.clone(),
+            b: proof.b.clone(),
+            c: proof.c.clone(),
         };
         match client.try_verify(&vproof, &public_inputs) {
             Ok(Ok(true)) => {}
@@ -165,6 +178,58 @@ impl AgentPassportValidator {
         );
 
         Ok(attestation)
+    }
+
+    /// Verify a passport proof and, if sound and unspent, mint the attestation.
+    ///
+    /// This is the load-bearing entry point: the proof *is* the authorization,
+    /// so no `require_auth` is needed — anyone relaying a valid, fresh proof
+    /// registers the agent. Returns the freshly stored [`Attestation`].
+    pub fn verify_and_register(
+        env: Env,
+        proof: Groth16Proof,
+        public_inputs: Vec<U256>,
+    ) -> Result<Attestation, Error> {
+        Self::verify_internal(&env, &proof, &public_inputs)
+    }
+
+    /// Verify multiple proofs in a single call.
+    ///
+    /// Returns results for all proofs; doesn't short-circuit on first failure.
+    /// Each proof is validated independently. Max batch size is 8.
+    pub fn verify_batch(env: Env, proofs: Vec<VerifyInput>) -> Result<Vec<VerifyResult>, Error> {
+        if proofs.len() > 8 {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut results = Vec::new(&env);
+        for input in proofs.iter() {
+            let root = input.public_inputs.get(0).unwrap_or(U256::from_u32(&env, 0));
+            match Self::verify_internal(&env, &input.proof, &input.public_inputs) {
+                Ok(_) => {
+                    results.push_back(VerifyResult {
+                        root,
+                        success: true,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    let error_sym = match e {
+                        Error::BadPublicInputs => Some(Symbol::new(&env, "BadPublicInputs")),
+                        Error::NullifierUsed => Some(Symbol::new(&env, "NullifierUsed")),
+                        Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
+                        Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
+                        _ => Some(Symbol::new(&env, "Error")),
+                    };
+                    results.push_back(VerifyResult {
+                        root,
+                        success: false,
+                        error: error_sym,
+                    });
+                }
+            }
+        }
+        Ok(results)
     }
 
     /// True iff `agent_id` holds a minted zk-passport.

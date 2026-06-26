@@ -52,7 +52,8 @@ export const Errors = {
   /**
    * The Groth16 proof did not verify against the embedded key.
    */
-  5: {message:"InvalidProof"}
+  5: {message:"InvalidProof"},
+  6: {message:"BatchTooLarge"}
 }
 
 
@@ -77,6 +78,17 @@ export interface Groth16Proof {
   a: Buffer;
   b: Buffer;
   c: Buffer;
+}
+
+export interface VerifyInput {
+  proof: Groth16Proof;
+  public_inputs: Array<u256>;
+}
+
+export interface VerifyResult {
+  error: Option<string>;
+  root: u256;
+  success: boolean;
 }
 
 export interface Client {
@@ -127,6 +139,15 @@ export interface Client {
    */
   verify_and_register: ({proof, public_inputs}: {proof: Groth16Proof, public_inputs: Array<u256>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Attestation>>>
 
+  /**
+   * Construct and simulate a verify_batch transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Verify multiple proofs in a single call.
+   *
+   * Returns results for all proofs; doesn't short-circuit on first failure.
+   * Each proof is validated independently. Max batch size is 8.
+   */
+  verify_batch: ({proofs}: {proofs: Array<VerifyInput>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Array<VerifyResult>>>>
+
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
@@ -145,16 +166,19 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABQAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAgAAAD1Xcm9uZyBudW1iZXIgb2YgcHVibGljIGlucHV0cyBmb3IgdGhlIGFnZW50X3Bhc3Nwb3J0IGNpcmN1aXQuAAAAAAAAD0JhZFB1YmxpY0lucHV0cwAAAAADAAAAPFRoaXMgbnVsbGlmaWVyIHdhcyBhbHJlYWR5IHNwZW50IOKAlCByZXBsYXkgLyBTeWJpbCBhdHRlbXB0LgAAAA1OdWxsaWZpZXJVc2VkAAAAAAAABAAAADpUaGUgR3JvdGgxNiBwcm9vZiBkaWQgbm90IHZlcmlmeSBhZ2FpbnN0IHRoZSBlbWJlZGRlZCBrZXkuAAAAAAAMSW52YWxpZFByb29mAAAABQ==",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABgAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAgAAAD1Xcm9uZyBudW1iZXIgb2YgcHVibGljIGlucHV0cyBmb3IgdGhlIGFnZW50X3Bhc3Nwb3J0IGNpcmN1aXQuAAAAAAAAD0JhZFB1YmxpY0lucHV0cwAAAAADAAAAPFRoaXMgbnVsbGlmaWVyIHdhcyBhbHJlYWR5IHNwZW50IOKAlCByZXBsYXkgLyBTeWJpbCBhdHRlbXB0LgAAAA1OdWxsaWZpZXJVc2VkAAAAAAAABAAAADpUaGUgR3JvdGgxNiBwcm9vZiBkaWQgbm90IHZlcmlmeSBhZ2FpbnN0IHRoZSBlbWJlZGRlZCBrZXkuAAAAAAAMSW52YWxpZFByb29mAAAABQAAAB1CYXRjaCBzaXplIGV4Y2VlZHMgdGhlIGxpbWl0IG9mIDguAAAAAAANQmF0Y2hUb29MYXJnZSAAAAAABg==",
         "AAAAAQAAAAAAAAAAAAAAC0F0dGVzdGF0aW9uAAAAAAUAAAAAAAAACGFnZW50X2lkAAAADAAAADFMZWRnZXIgc2VxdWVuY2UgYXQgd2hpY2ggdGhlIHBhc3Nwb3J0IHdhcyBtaW50ZWQuAAAAAAAABmxlZGdlcgAAAAAABAAAAAAAAAAJbnVsbGlmaWVyAAAAAAAADAAAAAAAAAANcmVnaXN0cnlfcm9vdAAAAAAAAAwAAAAAAAAACXNwZW5kX2NhcAAAAAAAAAw=",
         "AAAAAQAAAN1Hcm90aDE2IHByb29mIG92ZXIgQk4yNTQsIHJlLWRlY2xhcmVkIGluICp0aGlzKiBjb250cmFjdCdzIHNwZWMgKHRoZQppbXBvcnRlZCBvbmUgaXNuJ3QgZXhwb3J0ZWQpIHNvIFNES3MvQ0xJIGNhbiBidWlsZCB0aGUgYXJndW1lbnQgZGlyZWN0bHkuCkJ5dGUgbGF5b3V0OiBHMSBgYWAvYGNgID0geHx8eSAoMzJCIEJFIGVhY2gpOyBHMiBgYmAgPSB4LmMxfHx4LmMwfHx5LmMxfHx5LmMwLgAAAAAAAAAAAAAMR3JvdGgxNlByb29mAAAAAwAAAAAAAAABYQAAAAAAA+4AAABAAAAAAAAAAAFiAAAAAAAD7gAAAIAAAAAAAAAAAWMAAAAAAAPuAAAAQA==",
+        "AAAAAQAAAAAAAAAAAAAAB1ZlcmlmeUlucHV0AAAAAAIAAAAAAAAABXByb29mAAAAAAAH0AAAAAxHcm90aDE2UHJvb2YAAAAAAAAADXB1YmxpY19pbnB1dHMAAAAAAAPqAAAADAAAAAEAAAPp",
+        "AAAAAQAAAAAAAAAAAAAABFZlcmlmeVJlc3VsdAAAAAMAAAAAAAAABWVycm9yAAAAAAAD6QAAAAEAAAPpAAAABAAAAAAAAAAEcrootAAAAAAAAAwAAAAAAAAAB3N1Y2Nlc3MAAAAAAAE=",
         "AAAAAAAAAG1PbmUtdGltZSB3aXJpbmc6IHdobyBjYW4gcmUtcG9pbnQgdGhlIHZlcmlmaWVyLCBhbmQgdGhlIHZlcmlmaWVyJ3MKY29udHJhY3QgYWRkcmVzcy4gUGFuaWNzIG9uIGEgc2Vjb25kIGNhbGwuAAAAAAAABGluaXQAAAACAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAACHZlcmlmaWVyAAAAEwAAAAA=",
         "AAAAAAAAAEFUaGUgdmVyaWZpZXIgY29udHJhY3QgdGhpcyB2YWxpZGF0b3IgZGVsZWdhdGVzIHByb29mLWNoZWNraW5nIHRvLgAAAAAAAAh2ZXJpZmllcgAAAAAAAAABAAAD6QAAABMAAAAD",
         "AAAAAAAAADJGZXRjaCB0aGUgc3RvcmVkIGF0dGVzdGF0aW9uIGZvciBhbiBhZ2VudCwgaWYgYW55LgAAAAAADGdldF9wYXNzcG9ydAAAAAEAAAAAAAAACGFnZW50X2lkAAAADAAAAAEAAAPoAAAH0AAAAAtBdHRlc3RhdGlvbgA=",
         "AAAAAAAAAEZBZG1pbi1vbmx5OiByZS1wb2ludCB0byBhIG5ldyB2ZXJpZmllciAoZS5nLiBhZnRlciBhIGNpcmN1aXQgdXBncmFkZSkuAAAAAAAMc2V0X3ZlcmlmaWVyAAAAAQAAAAAAAAAIdmVyaWZpZXIAAAATAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAC9UcnVlIGlmZiBgYWdlbnRfaWRgIGhvbGRzIGEgbWludGVkIHprLXBhc3Nwb3J0LgAAAAANaXNfcmVnaXN0ZXJlZAAAAAAAAAEAAAAAAAAACGFnZW50X2lkAAAADAAAAAEAAAAB",
         "AAAAAAAAAC9UcnVlIGlmZiB0aGlzIG51bGxpZmllciBoYXMgYWxyZWFkeSBiZWVuIHNwZW50LgAAAAARaXNfbnVsbGlmaWVyX3VzZWQAAAAAAAABAAAAAAAAAAludWxsaWZpZXIAAAAAAAAMAAAAAQAAAAE=",
-        "AAAAAAAAARpWZXJpZnkgYSBwYXNzcG9ydCBwcm9vZiBhbmQsIGlmIHNvdW5kIGFuZCB1bnNwZW50LCBtaW50IHRoZSBhdHRlc3RhdGlvbi4KClRoaXMgaXMgdGhlIGxvYWQtYmVhcmluZyBlbnRyeSBwb2ludDogdGhlIHByb29mICppcyogdGhlIGF1dGhvcml6YXRpb24sCnNvIG5vIGByZXF1aXJlX2F1dGhgIGlzIG5lZWRlZCDigJQgYW55b25lIHJlbGF5aW5nIGEgdmFsaWQsIGZyZXNoIHByb29mCnJlZ2lzdGVycyB0aGUgYWdlbnQuIFJldHVybnMgdGhlIGZyZXNobHkgc3RvcmVkIFtgQXR0ZXN0YXRpb25gXS4AAAAAABN2ZXJpZnlfYW5kX3JlZ2lzdGVyAAAAAAIAAAAAAAAABXByb29mAAAAAAAH0AAAAAxHcm90aDE2UHJvb2YAAAAAAAAADXB1YmxpY19pbnB1dHMAAAAAAAPqAAAADAAAAAEAAAPpAAAH0AAAAAtBdHRlc3RhdGlvbgAAAAAD" ]),
+        "AAAAAAAAARpWZXJpZnkgYSBwYXNzcG9ydCBwcm9vZiBhbmQsIGlmIHNvdW5kIGFuZCB1bnNwZW50LCBtaW50IHRoZSBhdHRlc3RhdGlvbi4KClRoaXMgaXMgdGhlIGxvYWQtYmVhcmluZyBlbnRyeSBwb2ludDogdGhlIHByb29mICppcyogdGhlIGF1dGhvcml6YXRpb24sCnNvIG5vIGByZXF1aXJlX2F1dGhgIGlzIG5lZWRlZCDigJQgYW55b25lIHJlbGF5aW5nIGEgdmFsaWQsIGZyZXNoIHByb29mCnJlZ2lzdGVycyB0aGUgYWdlbnQuIFJldHVybnMgdGhlIGZyZXNobHkgc3RvcmVkIFtgQXR0ZXN0YXRpb25gXS4AAAAAABN2ZXJpZnlfYW5kX3JlZ2lzdGVyAAAAAAIAAAAAAAAABXByb29mAAAAAAAH0AAAAAxHcm90aDE2UHJvb2YAAAAAAAAADXB1YmxpY19pbnB1dHMAAAAAAAPqAAAADAAAAAEAAAPpAAAH0AAAAAtBdHRlc3RhdGlvbgAAAAAD",
+        "AAAAAAAAALhWZXJpZnkgbXVsdGlwbGUgcHJvb2ZzIGluIGEgc2luZ2xlIGNhbGwuCgpSZXR1cm5zIHJlc3VsdHMgZm9yIGFsbCBwcm9vZnM7IGRvZXNuJ3Qgc2hvcnQtY2lyY3VpdCBvbiBmaXJzdCBmYWlsdXJlLgpFYWNoIHByb29mIGlzIHZhbGlkYXRlZCBpbmRlcGVuZGVudGx5LiBNYXggYmF0Y2ggc2l6ZSBpcyA4LgAAAAAAAAAMdmVyaWZ5X2JhdGNoAAAAAQAAAAAAAAAGcHJvb2ZzAAAAAAAD6gAAB9AAAAAHVmVyaWZ5SW5wdXQAAAABAAAD6QAAB9AAAAAFAAAA7HZlcmlmeVJlc3VsdAAAAAA=" ]),
       options
     )
   }
@@ -165,6 +189,7 @@ export class Client extends ContractClient {
         set_verifier: this.txFromJSON<Result<void>>,
         is_registered: this.txFromJSON<boolean>,
         is_nullifier_used: this.txFromJSON<boolean>,
-        verify_and_register: this.txFromJSON<Result<Attestation>>
+        verify_and_register: this.txFromJSON<Result<Attestation>>,
+        verify_batch: this.txFromJSON<Result<Array<VerifyResult>>>
   }
 }
