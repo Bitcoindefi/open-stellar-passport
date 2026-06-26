@@ -19,11 +19,10 @@ function getConfig(pathname: string) {
   return configs.find((c) => c.pattern.test(pathname))!;
 }
 
-export function rateLimitExceeded(request: Request) {
-  const ip = getClientIp(request);
-  const pathname = new URL(request.url).pathname;
-  const config = getConfig(pathname);
-  const key = `${ip}:${configs.indexOf(config)}`;
+export function checkRateLimit(
+  key: string,
+  config: { maxRequests: number; windowMs: number }
+) {
   const now = Date.now();
   const windowStart = now - config.windowMs;
 
@@ -36,15 +35,29 @@ export function rateLimitExceeded(request: Request) {
   const valid = timestamps.filter((t) => t > windowStart);
   hits.set(key, valid);
 
-  if (valid.length >= config.max) {
+  if (valid.length >= config.maxRequests) {
     const retryAfterSeconds = Math.ceil(
       (valid[0] + config.windowMs - now) / 1000
     );
-    return { exceeded: true, retryAfterSeconds };
+    return { allowed: false, retryAfterSeconds };
   }
 
   valid.push(now);
-  return { exceeded: false, retryAfterSeconds: 0 };
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+export function rateLimitExceeded(request: Request) {
+  const ip = getClientIp(request);
+  const pathname = new URL(request.url).pathname;
+  const config = getConfig(pathname);
+  const key = `${ip}:${configs.indexOf(config)}`;
+
+  const { allowed, retryAfterSeconds } = checkRateLimit(key, {
+    maxRequests: config.max,
+    windowMs: config.windowMs,
+  });
+
+  return { exceeded: !allowed, retryAfterSeconds };
 }
 
 export function _reset() {
