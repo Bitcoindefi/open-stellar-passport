@@ -7,15 +7,6 @@
  */
 export { AgentPassport, authorizePassportSpend, type AgentPassportConfig, type CircuitBreakerConfig, type SpendLimits } from "./passport.js";
 export {
-  createDelegationToken,
-  verifyDelegationToken,
-  authorizeDelegatedPayment,
-  revokeDelegationToken,
-  revokeDelegatorTokens,
-  resetDelegationState,
-  type DelegationToken,
-} from "./delegation-token.js";
-export {
   generatePassportProof,
   toSorobanProof,
   derivePublicInputs,
