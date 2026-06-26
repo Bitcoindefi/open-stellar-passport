@@ -53,7 +53,8 @@ export const Errors = {
    * The Groth16 proof did not verify against the embedded key.
    */
   5: {message:"InvalidProof"},
-  6: {message:"BatchTooLarge"}
+  6: {message:"BatchTooLarge"},
+  7: {message:"UnknownRegistryRoot"}
 }
 
 
@@ -156,6 +157,73 @@ export interface Client {
    */
   verify_batch: ({proofs}: {proofs: Array<VerifyInput>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Array<VerifyResult>>>>
 
+  /**
+   * Construct and simulate a add_registry_root transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin-only: add a new trusted registry root to the allow-list.
+   */
+  add_registry_root: ({root}: {root: u256}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a remove_registry_root transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin-only: remove a registry root from the allow-list.
+   */
+  remove_registry_root: ({root}: {root: u256}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a transfer_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin-only: Propose a new admin.
+   */
+  transfer_admin: ({new_admin}: {new_admin: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a accept_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * The proposed admin accepts the role.
+   */
+  accept_admin: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a renounce_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin-only: Renounce the admin role.
+   */
+  renounce_admin: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a is_registry_root_approved transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * True iff `root` is in the approved allow-list.
+   */
+  is_registry_root_approved: ({root}: {root: u256}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /**
+   * Construct and simulate a bump_ttl transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Explicitly bump the TTL of the contract instance.
+   */
+  bump_ttl: (options?: MethodOptions) => Promise<AssembledTransaction<void>>
+
+  /**
+   * Construct and simulate a issue_credential transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  issue_credential: ({actor, root}: {actor: string, root: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a verify_credential transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  verify_credential: ({actor, root, success}: {actor: string, root: Buffer, success: boolean}, options?: MethodOptions) => Promise<AssembledTransaction<Result<boolean>>>
+
+  /**
+   * Construct and simulate a revoke_credential transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  revoke_credential: ({actor, root}: {actor: string, root: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a get_audit_entry transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  get_audit_entry: ({seq}: {seq: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Option<AuditRecord>>>
+
+  /**
+   * Construct and simulate a audit_count transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  audit_count: (options?: MethodOptions) => Promise<AssembledTransaction<u64>>
+
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
@@ -198,6 +266,18 @@ export class Client extends ContractClient {
         is_registered: this.txFromJSON<boolean>,
         is_nullifier_used: this.txFromJSON<boolean>,
         verify_and_register: this.txFromJSON<Result<Attestation>>,
-        verify_batch: this.txFromJSON<Result<Array<VerifyResult>>>
+        verify_batch: this.txFromJSON<Result<Array<VerifyResult>>>,
+        add_registry_root: this.txFromJSON<Result<void>>,
+        remove_registry_root: this.txFromJSON<Result<void>>,
+        transfer_admin: this.txFromJSON<Result<void>>,
+        accept_admin: this.txFromJSON<Result<void>>,
+        renounce_admin: this.txFromJSON<Result<void>>,
+        is_registry_root_approved: this.txFromJSON<boolean>,
+        bump_ttl: this.txFromJSON<void>,
+        issue_credential: this.txFromJSON<Result<void>>,
+        verify_credential: this.txFromJSON<Result<boolean>>,
+        revoke_credential: this.txFromJSON<Result<void>>,
+        get_audit_entry: this.txFromJSON<Option<AuditRecord>>,
+        audit_count: this.txFromJSON<u64>
   }
 }

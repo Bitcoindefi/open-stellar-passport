@@ -8,6 +8,7 @@ import {
   type Attestation,
   type VerifyInput,
   type VerifyResult,
+  type AuditRecord,
 } from "../bindings/src/index.js";
 import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 import {

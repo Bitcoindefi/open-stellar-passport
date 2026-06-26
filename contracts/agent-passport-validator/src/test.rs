@@ -111,7 +111,7 @@ fn registers_a_valid_passport() {
 #[test]
 fn verifies_a_batch_of_passports() {
     let env = Env::default();
-    let client = setup(&env);
+    let client = setup(&env, u256(&env, PI_ROOT));
 
     // Create 3 valid inputs with different agent IDs (and thus different nullifiers for this test's simplicity,
     // though real nullifiers depend on privateKey too). To keep it simple, we'll just use 3 different agent IDs.
@@ -146,7 +146,7 @@ fn verifies_a_batch_of_passports() {
 #[test]
 fn mixed_batch_results() {
     let env = Env::default();
-    let client = setup(&env);
+    let client = setup(&env, u256(&env, PI_ROOT));
 
     let mut inputs = Vec::new(&env);
 
@@ -192,7 +192,7 @@ fn mixed_batch_results() {
 #[test]
 fn rejects_batch_too_large() {
     let env = Env::default();
-    let client = setup(&env);
+    let client = setup(&env, u256(&env, PI_ROOT));
 
     let mut inputs = Vec::new(&env);
     for _ in 0..9 {

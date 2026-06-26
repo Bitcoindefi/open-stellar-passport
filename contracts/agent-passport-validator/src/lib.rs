@@ -17,7 +17,7 @@
 //!   [0] registryRoot   [1] nullifierHash   [2] agentId   [3] spendCap
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
     BytesN, Env, Symbol, U256, Vec,
 };
 
@@ -63,6 +63,53 @@ pub enum Error {
     InvalidProof = 5,
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 6,
+    /// The registry root is not in the approved allow-list.
+    UnknownRegistryRoot = 7,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminChanged {
+    pub old: Option<Address>,
+    pub new: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VerifierChanged {
+    pub old: Address,
+    pub new: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminTransferStarted {
+    pub old: Address,
+    pub new: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminRenounced {
+    pub old: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PassportRegistered {
+    pub agent_id: U256,
+    pub nullifier: U256,
+    pub spend_cap: U256,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuditRecord {
+    pub action: Symbol,
+    pub actor: Address,
+    pub root: BytesN<32>,
+    pub ledger: u32,
+    pub success: bool,
 }
 
 #[contracttype]
@@ -124,11 +171,13 @@ impl AgentPassportValidator {
         storage.set(&DataKey::Verifier, &verifier);
         storage.set(&DataKey::RegistryRoot(initial_root), &true);
 
-        AdminChanged {
-            old: None,
-            new: admin,
-        }
-        .publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "AdminChanged"),),
+            AdminChanged {
+                old: None,
+                new: admin,
+            },
+        );
     }
 
     /// Internal logic for verifying a single passport proof.
@@ -197,12 +246,14 @@ impl AgentPassportValidator {
         persistent.set(&pass_key, &attestation);
         persistent.extend_ttl(&pass_key, TTL_THRESHOLD, TTL_BUMP);
 
-        PassportRegistered {
-            agent_id,
-            nullifier,
-            spend_cap,
-        }
-        .publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "PassportRegistered"),),
+            PassportRegistered {
+                agent_id,
+                nullifier,
+                spend_cap,
+            },
+        );
 
         Ok(attestation)
     }
@@ -301,7 +352,13 @@ impl AgentPassportValidator {
 
         env.storage().instance().set(&DataKey::Verifier, &verifier);
 
-        VerifierChanged { old, new: verifier }.publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "VerifierChanged"),),
+            VerifierChanged {
+                old,
+                new: verifier,
+            },
+        );
 
         extend_instance_ttl(&env);
         Ok(())
@@ -348,11 +405,13 @@ impl AgentPassportValidator {
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
 
-        AdminTransferStarted {
-            old: admin,
-            new: new_admin,
-        }
-        .publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "AdminTransferStarted"),),
+            AdminTransferStarted {
+                old: admin,
+                new: new_admin,
+            },
+        );
 
         Ok(())
     }
@@ -373,11 +432,13 @@ impl AgentPassportValidator {
             .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
 
-        AdminChanged {
-            old: old_admin,
-            new: pending_admin,
-        }
-        .publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "AdminChanged"),),
+            AdminChanged {
+                old: old_admin,
+                new: pending_admin,
+            },
+        );
 
         Ok(())
     }
@@ -394,7 +455,10 @@ impl AgentPassportValidator {
         env.storage().instance().remove(&DataKey::Admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
 
-        AdminRenounced { old: admin }.publish(&env);
+        env.events().publish(
+            (Symbol::new(&env, "AdminRenounced"),),
+            AdminRenounced { old: admin },
+        );
 
         Ok(())
     }
