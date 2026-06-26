@@ -21,7 +21,7 @@
     "example:register": "node --loader ts-node/esm examples/register.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.5.0",
+    "@stellar/stellar-sdk": "^16.0.1",
     "buffer": "6.0.3",
     "snarkjs": "^0.7.5"
   },
