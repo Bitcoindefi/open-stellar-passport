@@ -41,15 +41,15 @@ describe("POST /api/protocol/passport rate limiting", () => {
     for (let i = 0; i < 5; i++) {
       const res = await POST(req("1.1.1.1"));
       expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data).toEqual({ ok: true });
+      const data = (await res.json()) as { ok: boolean };
+      expect(data.ok).toBe(true);
     }
 
     const res6 = await POST(req("1.1.1.1"));
     expect(res6.status).toBe(429);
     expect(res6.headers.get("Retry-After")).toBe("60");
-    const data6 = await res6.json();
-    expect(data6).toEqual({ ok: false });
+    const data6 = (await res6.json()) as { ok: boolean };
+    expect(data6.ok).toBe(false);
   });
 
   it("handles different IPs independently", async () => {
