@@ -13,6 +13,7 @@ export interface PassportRecord {
   status: PassportStatus
   config: PassportConfig
   createdAt: string
+  expiresAt?: string | null
 }
 
 type PassportDb = Map<string, PassportRecord>
