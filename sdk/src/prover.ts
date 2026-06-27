@@ -23,6 +23,15 @@ export interface PassportArtifacts {
   vk?: object;
 }
 
+export interface MultiCredentialArtifacts {
+  /** Compiled circuit witness generator for the multi-credential verifier. */
+  wasm: Artifact;
+  /** Proving key for the multi-credential verifier. */
+  zkey: Artifact;
+  /** Optional verification key for an off-chain sanity check before submitting. */
+  vk?: object;
+}
+
 /** The four public inputs, in the exact order the circuit (and contract) expect. */
 export interface PublicInputs {
   registryRoot: string;
@@ -37,6 +46,14 @@ export interface PassportWitness extends PublicInputs {
   balance: string;
   pathElements: string[];
   pathIndices: string;
+}
+
+export interface MultiCredential {
+  root: string;
+  attributeHash: string;
+  witness: string[];
+  pathIndices: string;
+  artifacts?: MultiCredentialArtifacts;
 }
 
 /** A proof packaged for the AgentPassportValidator contract. */
@@ -61,7 +78,8 @@ const be32 = (dec: string | bigint): string => {
 
 const hexToBytes = (hex: string): Uint8Array => {
   const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  for (let i = 0; i < out.length; i++)
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
 };
 
@@ -93,16 +111,33 @@ export function toSorobanProof(
   };
 }
 
+export function flattenSorobanProof(proof: SorobanProof): Buffer {
+  return Buffer.concat([
+    Buffer.from(proof.proof.a),
+    Buffer.from(proof.proof.b),
+    Buffer.from(proof.proof.c),
+  ]);
+}
+
 /**
  * Derive `registryRoot` + `nullifierHash` from the private witness using the
  * helper circuit, so callers don't have to reimplement Poseidon2 off-circuit.
  * Requires `artifacts.witnessWasm`.
  */
 export async function derivePublicInputs(
-  secret: { privateKey: string; agentId: string; pathElements: string[]; pathIndices: string },
+  secret: {
+    privateKey: string;
+    agentId: string;
+    pathElements: string[];
+    pathIndices: string;
+  },
   witnessWasm: Artifact,
 ): Promise<{ registryRoot: string; nullifierHash: string }> {
-  const { type, data } = await snarkjs.wtns.calculate(secret, witnessWasm as any, undefined as any);
+  const { type, data } = await snarkjs.wtns.calculate(
+    secret,
+    witnessWasm as any,
+    undefined as any,
+  );
   const w = await snarkjs.wtns.exportJson({ type, data } as any);
   return { registryRoot: w[1].toString(), nullifierHash: w[2].toString() };
 }
@@ -123,8 +158,53 @@ export async function generatePassportProof(
 
   if (artifacts.vk) {
     const ok = await snarkjs.groth16.verify(artifacts.vk, publicSignals, proof);
-    if (!ok) throw new Error("off-chain verification failed — refusing to submit");
+    if (!ok)
+      throw new Error("off-chain verification failed — refusing to submit");
   }
 
   return toSorobanProof(proof, publicSignals);
+}
+
+export function buildMultiCredentialWitness(credentials: MultiCredential[]) {
+  if (credentials.length === 0) {
+    throw new Error("at least one credential is required");
+  }
+
+  return {
+    credentialRoots: credentials.map((credential) => credential.root),
+    attributeHashes: credentials.map((credential) => credential.attributeHash),
+    witnesses: credentials.map((credential) => credential.witness),
+    pathIndices: credentials.map((credential) => credential.pathIndices),
+  };
+}
+
+export async function buildMultiCredentialProof(
+  credentials: MultiCredential[],
+): Promise<{ proof: Buffer; publicInputs: bigint[] }> {
+  const artifacts = credentials[0]?.artifacts;
+  if (!artifacts) {
+    throw new Error(
+      "multi-credential artifacts are required on the first credential",
+    );
+  }
+
+  const witness = buildMultiCredentialWitness(credentials);
+
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    witness,
+    artifacts.wasm as any,
+    artifacts.zkey as any,
+  );
+
+  if (artifacts.vk) {
+    const ok = await snarkjs.groth16.verify(artifacts.vk, publicSignals, proof);
+    if (!ok)
+      throw new Error("off-chain verification failed — refusing to submit");
+  }
+
+  const sorobanProof = toSorobanProof(proof, publicSignals);
+  return {
+    proof: flattenSorobanProof(sorobanProof),
+    publicInputs: publicSignals.map((value) => BigInt(value)),
+  };
 }

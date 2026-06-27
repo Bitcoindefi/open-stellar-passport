@@ -60,6 +60,10 @@ fn real_public_inputs(env: &Env) -> Vec<U256> {
     )
 }
 
+fn credential_root(env: &Env, fill: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[fill; 32])
+}
+
 /// Deploy the real verifier WASM + our validator, init the wiring, return both.
 fn setup(env: &Env, initial_root: U256) -> AgentPassportValidatorClient<'static> {
     let (_, _, client) = setup_with_id(env, initial_root);
@@ -391,6 +395,53 @@ fn renounce_admin() {
         &U256::from_u32(&env, 123),
     );
     assert!(res.is_err());
+}
+
+#[test]
+fn verify_multi_credential_accepts_two_valid_roots() {
+    let env = Env::default();
+    let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+    let actor = Address::generate(&env);
+    let root_a = credential_root(&env, 1);
+    let root_b = credential_root(&env, 2);
+    let roots = Vec::from_array(&env, [root_a.clone(), root_b.clone()]);
+    let proof = Bytes::from_slice(&env, &[7u8; 32]);
+    let public_inputs = Vec::from_array(&env, [11u64, 12u64, 21u64, 22u64]);
+
+    env.mock_all_auths();
+    client.issue_credential(&actor, &root_a);
+    client.issue_credential(&actor, &root_b);
+
+    let verified = client.verify_multi_credential(&roots, &proof, &public_inputs);
+    assert!(verified);
+    assert!(
+        env.events()
+            .all()
+            .filter_by_contract(&validator_addr)
+            .events()
+            .len()
+            >= 1
+    );
+}
+
+#[test]
+fn verify_multi_credential_fails_when_any_root_is_revoked() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+    let actor = Address::generate(&env);
+    let root_a = credential_root(&env, 3);
+    let root_b = credential_root(&env, 4);
+    let roots = Vec::from_array(&env, [root_a.clone(), root_b.clone()]);
+    let proof = Bytes::from_slice(&env, &[9u8; 32]);
+    let public_inputs = Vec::from_array(&env, [31u64, 32u64, 41u64, 42u64]);
+
+    env.mock_all_auths();
+    client.issue_credential(&actor, &root_a);
+    client.issue_credential(&actor, &root_b);
+    client.revoke_credential(&actor, &root_b);
+
+    let result = client.try_verify_multi_credential(&roots, &proof, &public_inputs);
+    assert_eq!(result, Err(Ok(Error::RevokedCredential)));
 }
 
 #[test]
