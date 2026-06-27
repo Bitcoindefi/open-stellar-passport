@@ -7,6 +7,7 @@ export type AuditAction =
   | "reactivated"
   | "transferred"
   | "expired"
+  | "extended"
   | "cloned"
 
 export interface AuditEntry {

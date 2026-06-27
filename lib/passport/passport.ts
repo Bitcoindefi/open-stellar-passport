@@ -161,6 +161,30 @@ export function expirePassport(id: string, actor: string, reason?: string): Pass
   return record
 }
 
+export function extendPassport(agentId: string, additionalDays: number, actor: string): PassportRecord {
+  const record = getPassportByAgentId(agentId)
+  if (!record) throw new Error("passport_not_found")
+  if (record.status === "revoked") throw new Error("passport_revoked")
+
+  const oldExpiresAt = record.expiresAt
+  const oldExpiresAtMs = typeof oldExpiresAt === "string" ? Date.parse(oldExpiresAt) : Number.NaN
+  if (!Number.isFinite(oldExpiresAtMs)) throw new Error("passport_expiry_invalid")
+
+  const newExpiresAt = new Date(oldExpiresAtMs + additionalDays * 24 * 60 * 60 * 1000).toISOString()
+  record.expiresAt = newExpiresAt
+  setPassport(record)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "extended",
+    actor,
+    metadata: {
+      oldExpiresAt,
+      newExpiresAt,
+    },
+  })
+  return record
+}
+
 export function clonePassport(id: string, newAgentId: string, actor: string, reason?: string): PassportRecord {
   const record = getPassport(id)
   if (!record) throw new Error("passport_not_found")
