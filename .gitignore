@@ -41,6 +41,7 @@ _vf_*.png
 
 # Installed agent skills (not project code)
 .agents/
-_tts_test.wav
+.kilo/
+_ttps_test.wav
 skills-lock.json
 docs/ElevenLabs_*
