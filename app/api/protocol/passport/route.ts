@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { issuePassport, type PassportConfig } from "@/lib/passport/passport"
+import { appendAdminAuditEntry } from "@/lib/passport/audit-log"
 
 const DEFAULT_TTL_DAYS = 30
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -81,6 +82,13 @@ export async function POST(req: Request) {
 
     const actor = req.headers.get("x-stellar-address") || "admin"
     const passport = issuePassport(body.id, body.agentId, actor, config, expiresAt)
+
+    appendAdminAuditEntry({
+      action: "grant",
+      actor,
+      target: body.id,
+      metadata: { agentId: body.agentId },
+    })
 
     return NextResponse.json(
       passport,

@@ -6,6 +6,7 @@ import {
   type TransferRecord,
 } from "@/lib/passport/transfer"
 import { getPassport, isPassportTransferable } from "@/lib/passport/passport"
+import { appendAdminAuditEntry } from "@/lib/passport/audit-log"
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -65,6 +66,13 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const record: TransferRecord = transferPassport(passportId, callerAddress, validation.input)
+
+    appendAdminAuditEntry({
+      action: "admin_transfer",
+      actor: callerAddress,
+      target: validation.input.newOwnerAddress,
+      metadata: { passportId },
+    })
 
     const webhookPayload = buildTransferWebhookPayload(record)
 

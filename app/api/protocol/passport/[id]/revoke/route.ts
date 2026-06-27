@@ -5,6 +5,7 @@ import {
   buildRevocationWebhookPayload,
   type RevocationRecord,
 } from "@/lib/passport/revocation"
+import { appendAdminAuditEntry } from "@/lib/passport/audit-log"
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -26,6 +27,13 @@ export async function POST(req: Request, context: RouteContext) {
 
     const actor = req.headers.get("x-stellar-address") || "admin"
     const record: RevocationRecord = revokePassport(passportId, validation.input, actor)
+
+    appendAdminAuditEntry({
+      action: "revoke",
+      actor,
+      target: passportId,
+      metadata: { reason: record.reason },
+    })
 
     // Build webhook payload (consumer can dispatch via their event bus)
     const webhookPayload = buildRevocationWebhookPayload(record)
