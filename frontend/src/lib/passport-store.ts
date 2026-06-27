@@ -189,6 +189,14 @@ export class PassportStore {
     return { ok: false, reason: "exceeds_spend_limit" };
   }
 
+  getAllPassports(): PassportRecord[] {
+    return Array.from(this.passports.values());
+  }
+
+  getPassportCount(): number {
+    return this.passports.size;
+  }
+
   reset(): void {
     this.events.length = 0;
     this.cbStates.clear();
