@@ -1,6 +1,10 @@
 import { isRevoked } from "./passport/revocation-store";
 
-export const DEFAULT_PASSPORT_TTL_DAYS = Number(process.env.PASSPORT_TTL_DAYS ?? 30);
+export const DEFAULT_PASSPORT_TTL_DAYS = Number(
+  // Use globalThis so this file can compile in browser/vite test environments.
+  (globalThis as any)?.process?.env?.PASSPORT_TTL_DAYS ?? 30,
+);
+
 
 export interface PassportRecord {
   agentId: string;
@@ -47,6 +51,47 @@ export class PassportStore {
   private events: AuthorizeEvent[] = [];
   private cbStates = new Map<string, { failures: number; revoked: boolean }>();
   private passports = new Map<string, PassportRecord>();
+
+  // ------------------------------------------------------------------ analytics
+
+  getAnalytics(params?: {
+    /** Include passports expiring within this window (ms from now). */
+    expiringWithinMs?: number;
+    /** Override time for deterministic tests. Defaults to Date.now(). */
+    nowMs?: number;
+  }): {
+    total: number;
+    active: number;
+    revoked: number;
+    expired: number;
+    expiring: number;
+  } {
+    const nowMs = params?.nowMs ?? Date.now();
+    const expiringWithinMs = params?.expiringWithinMs ?? 7 * 24 * 60 * 60 * 1000;
+
+    let total = 0;
+    let active = 0;
+    let revoked = 0;
+    let expired = 0;
+    let expiring = 0;
+
+    for (const [, p] of this.passports) {
+      total++;
+
+      const pRevoked = isRevoked(p.agentId);
+      const pExpiresMs = new Date(p.expiresAt).getTime();
+      const isExpired = pExpiresMs < nowMs;
+      const expSoon = !pRevoked && !isExpired && pExpiresMs <= nowMs + expiringWithinMs;
+
+      if (pRevoked) revoked++;
+      if (!pRevoked && isExpired) expired++;
+      if (!pRevoked && !isExpired) active++;
+      if (expSoon) expiring++;
+    }
+
+    return { total, active, revoked, expired, expiring };
+  }
+
 
   // ------------------------------------------------------------------ issuance
 
