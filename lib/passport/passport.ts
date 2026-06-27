@@ -1,4 +1,7 @@
+import { appendAuditEntry } from "./audit"
+
 export type PassportStatus = "active" | "revoked" | "expired" | "suspended"
+
 
 export interface PassportConfig {
   allowTransfer: boolean
@@ -86,3 +89,88 @@ export function resetPassportStore(): void {
   getDb().clear()
   getAgentIndex().clear()
 }
+
+export function getAllPassports(): PassportRecord[] {
+  return Array.from(getDb().values())
+}
+
+export function issuePassport(id: string, agentId: string, actor: string, config: PassportConfig = { allowTransfer: true }): PassportRecord {
+  const record: PassportRecord = {
+    id: normalizeId(id),
+    agentId,
+    status: "active",
+    config,
+    createdAt: new Date().toISOString(),
+  }
+  setPassport(record)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "issued",
+    actor,
+  })
+  return record
+}
+
+export function suspendPassport(id: string, actor: string, reason?: string): PassportRecord {
+  const record = getPassport(id)
+  if (!record) throw new Error("passport_not_found")
+  record.status = "suspended"
+  setPassport(record)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "suspended",
+    actor,
+    reason,
+  })
+  return record
+}
+
+export function reactivatePassport(id: string, actor: string, reason?: string): PassportRecord {
+  const record = getPassport(id)
+  if (!record) throw new Error("passport_not_found")
+  record.status = "active"
+  setPassport(record)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "reactivated",
+    actor,
+    reason,
+  })
+  return record
+}
+
+export function expirePassport(id: string, actor: string, reason?: string): PassportRecord {
+  const record = getPassport(id)
+  if (!record) throw new Error("passport_not_found")
+  record.status = "expired"
+  setPassport(record)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "expired",
+    actor,
+    reason,
+  })
+  return record
+}
+
+export function clonePassport(id: string, newAgentId: string, actor: string, reason?: string): PassportRecord {
+  const record = getPassport(id)
+  if (!record) throw new Error("passport_not_found")
+  const clonedRecord: PassportRecord = {
+    id: `${record.id}-clone`,
+    agentId: newAgentId,
+    status: "active",
+    config: { ...record.config },
+    createdAt: new Date().toISOString(),
+  }
+  setPassport(clonedRecord)
+  appendAuditEntry({
+    passportId: record.id,
+    action: "cloned",
+    actor,
+    target: clonedRecord.id,
+    reason,
+  })
+  return clonedRecord
+}
+

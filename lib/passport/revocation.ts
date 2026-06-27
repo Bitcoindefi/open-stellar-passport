@@ -1,4 +1,8 @@
+import { appendAuditEntry } from "./audit"
+import { getPassport, setPassport } from "./passport"
+
 export type RevocationReason =
+
   | "policy_violation"
   | "security_compromise"
   | "duplicate_passport"
@@ -129,6 +133,13 @@ export function revokePassport(
 
   db.set(cleanId, record)
 
+  // Update PassportRecord status if it exists
+  const passport = getPassport(cleanId)
+  if (passport) {
+    passport.status = "revoked"
+    setPassport(passport)
+  }
+
   const auditEntry: RevocationAuditEntry = {
     action: "revoke",
     passportId: cleanId,
@@ -137,6 +148,14 @@ export function revokePassport(
     revokedAt: now,
   }
   auditLog.push(auditEntry)
+
+  appendAuditEntry({
+    passportId: cleanId,
+    action: "revoked",
+    actor: revokedBy || "admin",
+    reason: input.reason,
+    metadata: record.notes ? { notes: record.notes } : undefined,
+  })
 
   // Keep audit log bounded
   if (auditLog.length > 10_000) {

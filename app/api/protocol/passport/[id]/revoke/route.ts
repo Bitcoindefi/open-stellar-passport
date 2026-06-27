@@ -24,7 +24,8 @@ export async function POST(req: Request, context: RouteContext) {
       )
     }
 
-    const record: RevocationRecord = revokePassport(passportId, validation.input)
+    const actor = req.headers.get("x-stellar-address") || "admin"
+    const record: RevocationRecord = revokePassport(passportId, validation.input, actor)
 
     // Build webhook payload (consumer can dispatch via their event bus)
     const webhookPayload = buildRevocationWebhookPayload(record)

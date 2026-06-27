@@ -3,6 +3,8 @@ import {
   updatePassportAgentId,
   isPassportTransferable,
 } from "./passport"
+import { appendAuditEntry } from "./audit"
+
 
 export const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/
 
@@ -147,6 +149,14 @@ export function transferPassport(
     transferredAt: now,
   }
   auditLog.push(auditEntry)
+
+  appendAuditEntry({
+    passportId: cleanId,
+    action: "transferred",
+    actor: currentOwnerAddress,
+    target: input.newOwnerAddress,
+    reason: reason ?? undefined,
+  })
 
   if (auditLog.length > 10_000) {
     auditLog.splice(0, auditLog.length - 10_000)
