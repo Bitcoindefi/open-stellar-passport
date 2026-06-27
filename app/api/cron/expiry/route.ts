@@ -3,6 +3,11 @@ import { getAllPassports, expirePassport } from "@/lib/passport/passport"
 
 export async function GET(req: Request) {
   try {
+    const auth = req.headers.get("authorization")
+    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 })
+    }
+
     const passports = getAllPassports()
     const now = Date.now()
     let expiredCount = 0

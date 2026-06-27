@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { NextRequest } from "next/server"
 import {
   issuePassport,
@@ -48,13 +48,22 @@ const NEW_AGENT_ID = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW"
 const ACTOR = "GB111111111111111111111111111111111111111111111111111111"
 
 describe("Audit Trail Integration & API", () => {
+  let originalCronSecret: string | undefined
+
   beforeEach(() => {
+    originalCronSecret = process.env.CRON_SECRET
+    process.env.CRON_SECRET = "supersecret"
     resetPassportStore()
     resetRevocationStore()
     resetTransferStore()
     resetAuditStore()
     vi.useRealTimers()
   })
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalCronSecret
+  })
+
 
   // ─── Lifecycle Actions ───────────────────────────────────────────
   describe("Lifecycle Actions", () => {
@@ -220,6 +229,22 @@ describe("Audit Trail Integration & API", () => {
 
   // ─── Expiry Cron Job ─────────────────────────────────────────────
   describe("API Route: GET /api/cron/expiry", () => {
+    it("should return 401 Unauthorized if cron secret is invalid", async () => {
+      const res = await runExpiryCron(new Request("http://localhost/api/cron/expiry", {
+        headers: { authorization: "Bearer invalid_secret" }
+      }))
+      expect(res.status).toBe(401)
+      const body = await res.json()
+      expect(body).toEqual({ ok: false, error: "Unauthorized" })
+    })
+
+    it("should return 401 Unauthorized if authorization header is missing", async () => {
+      const res = await runExpiryCron(new Request("http://localhost/api/cron/expiry"))
+      expect(res.status).toBe(401)
+      const body = await res.json()
+      expect(body).toEqual({ ok: false, error: "Unauthorized" })
+    })
+
     it("should mark active passports older than 30 days as expired and record audit trail", async () => {
       vi.useFakeTimers()
       const now = new Date("2026-06-27T09:00:00Z").getTime()
@@ -238,7 +263,9 @@ describe("Audit Trail Integration & API", () => {
       // Reset system time to today
       vi.setSystemTime(now)
 
-      const res = await runExpiryCron(new Request("http://localhost/api/cron/expiry"))
+      const res = await runExpiryCron(new Request("http://localhost/api/cron/expiry", {
+        headers: { authorization: "Bearer supersecret" }
+      }))
       expect(res.status).toBe(200)
       const body = await res.json() as { ok: boolean; expiredCount: number; expiredIds: string[] }
       expect(body.ok).toBe(true)
@@ -260,6 +287,7 @@ describe("Audit Trail Integration & API", () => {
       })
     })
   })
+
 
   // ─── Endpoint Revocation Integration ─────────────────────────────
   describe("API Route Integration: POST /api/protocol/passport/:id/revoke", () => {
