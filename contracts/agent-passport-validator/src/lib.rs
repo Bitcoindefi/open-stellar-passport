@@ -65,6 +65,10 @@ pub enum Error {
     BatchTooLarge = 6,
     /// The registry root is not in the approved allow-list.
     UnknownRegistryRoot = 7,
+    /// The credential has expired.
+    CredentialExpired = 8,
+    /// The issuer is not trusted.
+    UnauthorizedIssuer = 9,
 }
 
 #[contracttype]
@@ -152,6 +156,7 @@ enum DataKey {
     RegistryRoot(U256),
     AuditEntry(u64),
     AuditSequence,
+    TrustedIssuer(Address),
 }
 
 #[contract]
@@ -161,7 +166,7 @@ pub struct AgentPassportValidator;
 impl AgentPassportValidator {
     /// One-time wiring: who can re-point the verifier, and the verifier's
     /// contract address. Panics on a second call.
-    pub fn init(env: Env, admin: Address, verifier: Address, initial_root: U256) {
+    pub fn init(env: Env, admin: Address, verifier: Address, initial_root: U256, initial_issuers: Vec<Address>) {
         let storage = env.storage().instance();
         if storage.has(&DataKey::Initialized) {
             panic_with_error!(&env, Error::AlreadyInitialized);
@@ -170,6 +175,9 @@ impl AgentPassportValidator {
         storage.set(&DataKey::Admin, &admin);
         storage.set(&DataKey::Verifier, &verifier);
         storage.set(&DataKey::RegistryRoot(initial_root), &true);
+        for issuer in initial_issuers.iter() {
+            storage.set(&DataKey::TrustedIssuer(issuer), &true);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "AdminChanged"),),
@@ -297,6 +305,7 @@ impl AgentPassportValidator {
                         Error::NullifierUsed => Some(Symbol::new(&env, "NullifierUsed")),
                         Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
                         Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
+                        Error::CredentialExpired => Some(Symbol::new(&env, "CredentialExpired")),
                         _ => Some(Symbol::new(&env, "Error")),
                     };
                     results.push_back(VerifyResult {
@@ -473,8 +482,45 @@ impl AgentPassportValidator {
         extend_instance_ttl(&env);
     }
 
+    /// Admin-only: add a trusted issuer.
+    pub fn add_trusted_issuer(env: Env, issuer: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TrustedIssuer(issuer), &true);
+        Ok(())
+    }
+
+    /// Admin-only: remove a trusted issuer.
+    pub fn remove_trusted_issuer(env: Env, issuer: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .remove(&DataKey::TrustedIssuer(issuer));
+        Ok(())
+    }
+
+    /// True iff `issuer` is in the trusted issuer allow-list.
+    pub fn is_trusted_issuer(env: Env, issuer: Address) -> bool {
+        env.storage().instance().has(&DataKey::TrustedIssuer(issuer))
+    }
+
     pub fn issue_credential(env: Env, actor: Address, root: BytesN<32>) -> Result<(), Error> {
         actor.require_auth();
+
+        if !Self::is_trusted_issuer(env.clone(), actor.clone()) {
+            return Err(Error::UnauthorizedIssuer);
+        }
 
         let instance = env.storage().instance();
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
@@ -502,9 +548,23 @@ impl AgentPassportValidator {
         env: Env,
         actor: Address,
         root: BytesN<32>,
+        expiry_date_unix: u64,
         success: bool,
     ) -> Result<bool, Error> {
         actor.require_auth();
+
+        let current_time = env.ledger().timestamp();
+        if expiry_date_unix < current_time {
+            return Err(Error::CredentialExpired);
+        }
+
+        let thirty_days_in_secs = 30 * 24 * 60 * 60;
+        if expiry_date_unix < current_time + thirty_days_in_secs {
+            env.events().publish(
+                (Symbol::new(&env, "credential_expired"),),
+                expiry_date_unix,
+            );
+        }
 
         let instance = env.storage().instance();
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
