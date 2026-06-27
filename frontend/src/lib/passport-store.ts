@@ -74,6 +74,11 @@ export class PassportStore {
     return this.passports.get(agentId);
   }
 
+  /** Returns all stored passports. */
+  getAllPassports(): PassportRecord[] {
+    return Array.from(this.passports.values());
+  }
+
   /**
    * Re-issues a new expiresAt from now without changing spendCapXlm.
    * Requires the matching zkProofHash to prevent unauthorized extensions.
