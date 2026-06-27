@@ -10,6 +10,12 @@ export interface PassportRecord {
   zkProofHash: string;
 }
 
+export interface RevocationEntry {
+  agentId: string;
+  revokedAt: string;
+  reason: string;
+}
+
 export interface SpendLimits {
   dailyMaxXlm?: number;
   weeklyMaxXlm?: number;
@@ -47,6 +53,7 @@ export class PassportStore {
   private events: AuthorizeEvent[] = [];
   private cbStates = new Map<string, { failures: number; revoked: boolean }>();
   private passports = new Map<string, PassportRecord>();
+  private revocations = new Map<string, RevocationEntry>();
 
   // ------------------------------------------------------------------ issuance
 
@@ -66,6 +73,7 @@ export class PassportStore {
     ).toISOString();
     const record: PassportRecord = { agentId, issuedAt, expiresAt, spendCapXlm, zkProofHash };
     this.passports.set(agentId, record);
+    this.revocations.delete(agentId);
     return record;
   }
 
@@ -101,11 +109,36 @@ export class PassportStore {
     }
   }
 
+<<<<<<< HEAD
   /** Internal helper: trips the circuit-breaker revoked flag for an agent. */
   private _cbRevoke(agentId: string): void {
+=======
+  revokePassport(agentId: string, reason = "circuit_breaker_tripped"): void {
+>>>>>>> 990b0b0 (feat: add revocation management for passports with GET endpoint and tests)
     const state = this.cbStates.get(agentId);
-    if (!state) return;
-    state.revoked = true;
+    if (state) {
+      state.revoked = true;
+    }
+
+    const passport = this.passports.get(agentId);
+    if (!passport) return;
+
+    this.revocations.set(agentId, {
+      agentId,
+      revokedAt: new Date().toISOString(),
+      reason,
+    });
+  }
+
+  getRevocationList(): RevocationEntry[] {
+    const now = new Date();
+
+    return Array.from(this.revocations.values())
+      .filter(({ agentId }) => {
+        const passport = this.passports.get(agentId);
+        return passport != null && new Date(passport.expiresAt) > now;
+      })
+      .sort((a, b) => a.agentId.localeCompare(b.agentId));
   }
 
   // ------------------------------------------------------------------ authorization
@@ -193,6 +226,7 @@ export class PassportStore {
     this.events.length = 0;
     this.cbStates.clear();
     this.passports.clear();
+    this.revocations.clear();
   }
 }
 
