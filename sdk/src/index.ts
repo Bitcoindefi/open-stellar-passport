@@ -28,3 +28,5 @@ export {
 
 export { PassportClient } from "./PassportClient.js";
 
+export * from "./delegation-store.js";
+export * from "./delegation-token.js";
