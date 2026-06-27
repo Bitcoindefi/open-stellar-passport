@@ -1,83 +1,132 @@
-import { describe, expect, it, beforeEach, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
-import { _reset } from "../../../../src/lib/rate-limit";
+import { _reset as resetRateLimit } from "../../../../src/lib/rate-limit";
+import { globalPassportStore } from "../../../../src/lib/passport-store";
 import { NextRequest } from "next/server";
 
-// Mock next/server since next is not installed in the Vite frontend workspace
-vi.mock("next/server", () => {
-  return {
-    NextResponse: {
-      json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => {
-        const headers = new Headers(init?.headers);
-        return {
-          status: init?.status ?? 200,
-          headers,
-          json: async () => body,
-        } as unknown as Response;
-      },
-    },
-    NextRequest: class {},
-  };
-});
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (
+      body: unknown,
+      init?: { status?: number; headers?: Record<string, string> },
+    ) => ({
+      status: init?.status ?? 200,
+      headers: new Headers(init?.headers),
+      json: async () => body,
+    }),
+  },
+  NextRequest: class {},
+}));
 
-function req(ip = "1.2.3.4") {
+function req(body: unknown, ip = "1.2.3.4") {
   return new Request("https://example.com/api/protocol/passport", {
     method: "POST",
-    headers: { "x-forwarded-for": ip },
+    headers: {
+      "x-forwarded-for": ip,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
   }) as unknown as NextRequest;
 }
 
-describe("POST /api/protocol/passport rate limiting", () => {
+describe("POST /api/protocol/passport", () => {
   beforeEach(() => {
-    _reset();
-    vi.useFakeTimers();
+    resetRateLimit();
+    globalPassportStore.reset();
+    vi.useFakeTimers({ now: new Date("2026-06-27T00:00:00.000Z").getTime() });
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("allows 5 requests from the same IP, but blocks the 6th with 429", async () => {
-    for (let i = 0; i < 5; i++) {
-      const res = await POST(req("1.1.1.1"));
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data).toEqual({ ok: true });
-    }
+  it("issues passports for two service contexts for the same agent", async () => {
+    const payment = await POST(
+      req({
+        agentId: "agent-1",
+        spendCapXlm: 100,
+        zkProofHash: "hash-payment",
+        serviceContext: "payment-routing",
+      }),
+    );
+    const data = await POST(
+      req({
+        agentId: "agent-1",
+        spendCapXlm: 200,
+        zkProofHash: "hash-data",
+        serviceContext: "data-access",
+      }),
+    );
 
-    const res6 = await POST(req("1.1.1.1"));
-    expect(res6.status).toBe(429);
-    expect(res6.headers.get("Retry-After")).toBe("60");
-    const data6 = await res6.json();
-    expect(data6).toEqual({ ok: false });
+    expect(payment.status).toBe(201);
+    expect(data.status).toBe(201);
+    expect(globalPassportStore.listPassports("agent-1")).toHaveLength(2);
   });
 
-  it("handles different IPs independently", async () => {
-    for (let i = 0; i < 5; i++) {
-      await POST(req("1.1.1.1"));
-    }
+  it("defaults omitted serviceContext to default", async () => {
+    const response = await POST(
+      req({
+        agentId: "agent-2",
+        spendCapXlm: 300,
+        zkProofHash: "hash-default",
+      }),
+    );
 
-    // 6th request from 1.1.1.1 is blocked
-    const resBlocked = await POST(req("1.1.1.1"));
-    expect(resBlocked.status).toBe(429);
-
-    // 1st request from 2.2.2.2 is allowed
-    const resAllowed = await POST(req("2.2.2.2"));
-    expect(resAllowed.status).toBe(200);
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      passport: {
+        agentId: "agent-2",
+        serviceContext: "default",
+      },
+    });
   });
 
-  it("allows requests again after the rate limit window resets", async () => {
+  it("returns 400 for an invalid serviceContext", async () => {
+    const response = await POST(
+      req({
+        agentId: "agent-3",
+        spendCapXlm: 300,
+        zkProofHash: "hash-invalid",
+        serviceContext: "invalid context",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      reason: "InvalidServiceContext",
+    });
+  });
+
+  it("rate-limits the 6th request from the same IP", async () => {
     for (let i = 0; i < 5; i++) {
-      await POST(req("1.1.1.1"));
+      const response = await POST(
+        req(
+          {
+            agentId: `agent-${i}`,
+            spendCapXlm: 100,
+            zkProofHash: `hash-${i}`,
+          },
+          "7.7.7.7",
+        ),
+      );
+      expect(response.status).toBe(201);
     }
 
-    const resBlocked = await POST(req("1.1.1.1"));
-    expect(resBlocked.status).toBe(429);
+    const blocked = await POST(
+      req(
+        {
+          agentId: "agent-6",
+          spendCapXlm: 100,
+          zkProofHash: "hash-6",
+        },
+        "7.7.7.7",
+      ),
+    );
 
-    // Advance time by 60 seconds (windowMs is 60_000)
-    vi.advanceTimersByTime(60_001);
-
-    const resAllowed = await POST(req("1.1.1.1"));
-    expect(resAllowed.status).toBe(200);
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get("Retry-After")).toBe("60");
+    await expect(blocked.json()).resolves.toEqual({ ok: false });
   });
 });

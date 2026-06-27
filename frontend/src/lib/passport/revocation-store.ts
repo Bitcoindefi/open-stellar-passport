@@ -9,25 +9,44 @@
  * in `beforeEach` / `afterEach` to prevent cross-test pollution.
  */
 
+import { DEFAULT_SERVICE_CONTEXT } from "../passport-store";
+
 const revokedPassports = new Set<string>();
 
-function normalize(agentId: string): string {
+function normalizeAgentId(agentId: string): string {
   return agentId.trim().toLowerCase();
+}
+
+function normalizeContext(serviceContext: string): string {
+  return serviceContext.trim();
+}
+
+function revocationKey(
+  agentId: string,
+  serviceContext = DEFAULT_SERVICE_CONTEXT,
+): string {
+  return `${normalizeAgentId(agentId)}::${normalizeContext(serviceContext)}`;
 }
 
 /**
  * Marks a passport as revoked.  Safe to call more than once (idempotent).
  */
-export function revokePassport(agentId: string): void {
-  revokedPassports.add(normalize(agentId));
+export function revokePassport(
+  agentId: string,
+  serviceContext = DEFAULT_SERVICE_CONTEXT,
+): void {
+  revokedPassports.add(revocationKey(agentId, serviceContext));
 }
 
 /**
  * Returns `true` if the passport has been explicitly revoked.
  * The check is case-insensitive and trims surrounding whitespace.
  */
-export function isRevoked(agentId: string): boolean {
-  return revokedPassports.has(normalize(agentId));
+export function isRevoked(
+  agentId: string,
+  serviceContext = DEFAULT_SERVICE_CONTEXT,
+): boolean {
+  return revokedPassports.has(revocationKey(agentId, serviceContext));
 }
 
 /** Clears the registry.  Intended for test isolation only. */

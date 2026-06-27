@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { globalPassportStore, PassportRecord } from "../../../src/lib/passport-store";
+import {
+  globalPassportStore,
+  PassportRecord,
+} from "../../../src/lib/passport-store";
 import { isRevoked } from "../../../src/lib/passport/revocation-store";
 
-function getStatus(passport: PassportRecord): "active" | "suspended" | "revoked" | "expired" {
-  if (isRevoked(passport.agentId)) {
+function getStatus(
+  passport: PassportRecord,
+): "active" | "suspended" | "revoked" | "expired" {
+  if (isRevoked(passport.agentId, passport.serviceContext)) {
     return "revoked";
   }
   if (passport.suspended) {
@@ -31,28 +36,32 @@ export async function GET(request: NextRequest) {
 
   // Apply filters
   if (agentId) {
-    passports = passports.filter(p => p.agentId.toLowerCase() === agentId.toLowerCase());
+    passports = passports.filter(
+      (p) => p.agentId.toLowerCase() === agentId.toLowerCase(),
+    );
   }
 
   if (status) {
-    passports = passports.filter(p => getStatus(p) === status);
+    passports = passports.filter((p) => getStatus(p) === status);
   }
 
   if (issuer) {
-    passports = passports.filter(p => p.issuer?.toLowerCase() === issuer.toLowerCase());
+    passports = passports.filter(
+      (p) => p.issuer?.toLowerCase() === issuer.toLowerCase(),
+    );
   }
 
   if (issuedAfter) {
     const afterDate = new Date(issuedAfter);
     if (!isNaN(afterDate.getTime())) {
-      passports = passports.filter(p => new Date(p.issuedAt) >= afterDate);
+      passports = passports.filter((p) => new Date(p.issuedAt) >= afterDate);
     }
   }
 
   if (issuedBefore) {
     const beforeDate = new Date(issuedBefore);
     if (!isNaN(beforeDate.getTime())) {
-      passports = passports.filter(p => new Date(p.issuedAt) <= beforeDate);
+      passports = passports.filter((p) => new Date(p.issuedAt) <= beforeDate);
     }
   }
 
@@ -87,9 +96,9 @@ export async function GET(request: NextRequest) {
   if (issuedBefore) activeFilters.issuedBefore = issuedBefore;
 
   // Format passports payload in response
-  const formattedPassports = paginated.map(p => ({
+  const formattedPassports = paginated.map((p) => ({
     ...p,
-    status: getStatus(p)
+    status: getStatus(p),
   }));
 
   return NextResponse.json(
@@ -98,12 +107,12 @@ export async function GET(request: NextRequest) {
       total,
       page: pageNum,
       pageSize: sizeNum,
-      filters: activeFilters
+      filters: activeFilters,
     },
     {
       headers: {
         "Cache-Control": "no-store",
       },
-    }
+    },
   );
 }

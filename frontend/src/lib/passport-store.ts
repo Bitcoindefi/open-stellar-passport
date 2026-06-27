@@ -1,11 +1,14 @@
 import { isRevoked } from "./passport/revocation-store";
 
-export const DEFAULT_PASSPORT_TTL_DAYS = Number(process.env.PASSPORT_TTL_DAYS ?? 30);
+export const DEFAULT_PASSPORT_TTL_DAYS = Number(
+  process.env.PASSPORT_TTL_DAYS ?? 30,
+);
 
 export interface PassportRecord {
   agentId: string;
-  issuedAt: string;   // ISO timestamp
-  expiresAt: string;  // ISO timestamp — issuedAt + TTL_DAYS
+  serviceContext: string;
+  issuedAt: string; // ISO timestamp
+  expiresAt: string; // ISO timestamp — issuedAt + TTL_DAYS
   spendCapXlm: number;
   zkProofHash: string;
   issuer?: string;
@@ -48,9 +51,24 @@ export interface SpendAnalytics {
 
 interface AuthorizeEvent {
   agentId: string;
+  serviceContext: string;
   amount: number;
   ok: boolean;
   timestamp: number;
+}
+
+export const DEFAULT_SERVICE_CONTEXT = "default";
+const SERVICE_CONTEXT_PATTERN = /^[A-Za-z0-9-]{1,50}$/;
+
+function passportKey(
+  agentId: string,
+  serviceContext = DEFAULT_SERVICE_CONTEXT,
+): string {
+  return `${agentId}::${serviceContext}`;
+}
+
+export function isValidServiceContext(serviceContext: string): boolean {
+  return SERVICE_CONTEXT_PATTERN.test(serviceContext);
 }
 
 function utcDayStart(ts: number): number {
@@ -83,19 +101,37 @@ export class PassportStore {
     zkProofHash: string,
     ttlDays = DEFAULT_PASSPORT_TTL_DAYS,
     issuer?: string,
+    serviceContext = DEFAULT_SERVICE_CONTEXT,
   ): PassportRecord {
     const issuedAt = new Date().toISOString();
     const expiresAt = new Date(
       Date.now() + ttlDays * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const record: PassportRecord = { agentId, issuedAt, expiresAt, spendCapXlm, zkProofHash, issuer };
-    this.passports.set(agentId, record);
+    const record: PassportRecord = {
+      agentId,
+      serviceContext,
+      issuedAt,
+      expiresAt,
+      spendCapXlm,
+      zkProofHash,
+      issuer,
+    };
+    this.passports.set(passportKey(agentId, serviceContext), record);
     return record;
   }
 
-  /** Returns the stored passport for an agent, or undefined if not found. */
-  getPassport(agentId: string): PassportRecord | undefined {
-    return this.passports.get(agentId);
+  /** Returns the stored passport for an agent + context, or undefined if not found. */
+  getPassport(
+    agentId: string,
+    serviceContext = DEFAULT_SERVICE_CONTEXT,
+  ): PassportRecord | undefined {
+    return this.passports.get(passportKey(agentId, serviceContext));
+  }
+
+  listPassports(agentId: string): PassportRecord[] {
+    return Array.from(this.passports.values()).filter(
+      (passport) => passport.agentId === agentId,
+    );
   }
 
   /**
@@ -107,9 +143,10 @@ export class PassportStore {
     zkProofHash: string,
     ttlDays = DEFAULT_PASSPORT_TTL_DAYS,
   ): { ok: true; expiresAt: string } | { ok: false; reason: string } {
-    const passport = this.passports.get(agentId);
+    const passport = this.getPassport(agentId);
     if (!passport) return { ok: false, reason: "PassportNotFound" };
-    if (passport.zkProofHash !== zkProofHash) return { ok: false, reason: "InvalidProofHash" };
+    if (passport.zkProofHash !== zkProofHash)
+      return { ok: false, reason: "InvalidProofHash" };
 
     passport.expiresAt = new Date(
       Date.now() + ttlDays * 24 * 60 * 60 * 1000,
@@ -148,9 +185,13 @@ export class PassportStore {
     }
 
     // Expiry check
-    const passport = this.passports.get(agentId);
+    const passport = this.getPassport(agentId);
     if (passport && new Date(passport.expiresAt) < new Date()) {
-      return { ok: false, reason: "PassportExpired", expiredAt: passport.expiresAt };
+      return {
+        ok: false,
+        reason: "PassportExpired",
+        expiredAt: passport.expiresAt,
+      };
     }
 
     if (config?.spendLimits) {
@@ -165,7 +206,9 @@ export class PassportStore {
     if (cbState?.revoked) return { ok: false, reason: "passport_revoked" };
 
     const now = Date.now();
-    const hasLimits = !!(config?.spendLimits?.dailyMaxXlm || config?.spendLimits?.weeklyMaxXlm);
+    const hasLimits = !!(
+      config?.spendLimits?.dailyMaxXlm || config?.spendLimits?.weeklyMaxXlm
+    );
 
     if (hasLimits) {
       const sl = config.spendLimits!;
@@ -177,25 +220,51 @@ export class PassportStore {
         .reduce((s, e) => s + e.amount, 0);
 
       const weekSum = this.events
-        .filter((e) => e.agentId === agentId && e.ok && e.timestamp >= weekStart)
+        .filter(
+          (e) => e.agentId === agentId && e.ok && e.timestamp >= weekStart,
+        )
         .reduce((s, e) => s + e.amount, 0);
 
       if (sl.dailyMaxXlm != null && daySum + amount > sl.dailyMaxXlm) {
-        this.events.push({ agentId, amount, ok: false, timestamp: now });
+        this.events.push({
+          agentId,
+          serviceContext: DEFAULT_SERVICE_CONTEXT,
+          amount,
+          ok: false,
+          timestamp: now,
+        });
         return this.fail(agentId, cbState, config);
       }
 
       if (sl.weeklyMaxXlm != null && weekSum + amount > sl.weeklyMaxXlm) {
-        this.events.push({ agentId, amount, ok: false, timestamp: now });
+        this.events.push({
+          agentId,
+          serviceContext: DEFAULT_SERVICE_CONTEXT,
+          amount,
+          ok: false,
+          timestamp: now,
+        });
         return this.fail(agentId, cbState, config);
       }
 
-      this.events.push({ agentId, amount, ok: true, timestamp: now });
+      this.events.push({
+        agentId,
+        serviceContext: DEFAULT_SERVICE_CONTEXT,
+        amount,
+        ok: true,
+        timestamp: now,
+      });
       if (cbState) cbState.failures = 0;
       return { ok: true };
     }
 
-    this.events.push({ agentId, amount, ok: true, timestamp: now });
+    this.events.push({
+      agentId,
+      serviceContext: DEFAULT_SERVICE_CONTEXT,
+      amount,
+      ok: true,
+      timestamp: now,
+    });
     if (cbState) {
       cbState.failures++;
       if (cbState.failures >= config!.circuitBreaker!.maxConsecutiveFailures) {
@@ -206,8 +275,13 @@ export class PassportStore {
     return { ok: true };
   }
 
-  getSpendAnalytics(agentId: string, now = Date.now()): SpendAnalytics | undefined {
-    const hasPassport = this.passports.has(agentId);
+  getSpendAnalytics(
+    agentId: string,
+    now = Date.now(),
+  ): SpendAnalytics | undefined {
+    const hasPassport = this.passports.has(
+      passportKey(agentId, DEFAULT_SERVICE_CONTEXT),
+    );
     const hasHistory = this.events.some((event) => event.agentId === agentId);
     if (!hasPassport && !hasHistory) return undefined;
 
@@ -272,8 +346,11 @@ export class PassportStore {
     return this.passports.size;
   }
 
-  suspendPassport(agentId: string): void {
-    const passport = this.passports.get(agentId);
+  suspendPassport(
+    agentId: string,
+    serviceContext = DEFAULT_SERVICE_CONTEXT,
+  ): void {
+    const passport = this.getPassport(agentId, serviceContext);
     if (passport) {
       passport.suspended = true;
     }
