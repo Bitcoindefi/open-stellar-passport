@@ -405,11 +405,12 @@ fn test_audit_logging() {
     client.issue_credential(&actor, &root);
     assert_eq!(client.audit_count(), 1);
 
-    let res_verify_ok = client.verify_credential(&actor, &root, &true);
+    // use a future expiry date so it passes
+    let res_verify_ok = client.verify_credential(&actor, &root, &9999999999, &true);
     assert_eq!(res_verify_ok, true);
     assert_eq!(client.audit_count(), 2);
 
-    let res_verify_fail = client.verify_credential(&actor, &root, &false);
+    let res_verify_fail = client.verify_credential(&actor, &root, &9999999999, &false);
     assert_eq!(res_verify_fail, false);
     assert_eq!(client.audit_count(), 3);
 
@@ -439,4 +440,23 @@ fn test_audit_logging() {
     assert_eq!(entry3.actor, actor);
     assert_eq!(entry3.root, root);
     assert_eq!(entry3.success, true);
+}
+
+#[test]
+fn checks_expiry_date() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+    let actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[0u8; 32]);
+    env.mock_all_auths();
+
+    env.ledger().set_timestamp(100);
+    // set expiry to 1s in the future (101) -> verify passes
+    let res = client.verify_credential(&actor, &root, &101, &true);
+    assert_eq!(res, true);
+
+    // advance clock past expiry (102) -> verify fails
+    env.ledger().set_timestamp(102);
+    let err = client.try_verify_credential(&actor, &root, &101, &true);
+    assert_eq!(err, Err(Ok(Error::CredentialExpired)));
 }
