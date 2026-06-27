@@ -11,6 +11,7 @@ export enum PassportError {
   InvalidProof = "InvalidProof",
   BatchTooLarge = "BatchTooLarge",
   UnknownRegistryRoot = "UnknownRegistryRoot",
+  CredentialExpired = "CredentialExpired",
   Unknown = "Unknown",
 }
 
@@ -21,9 +22,16 @@ export type VerifyCredentialInput = {
   proof: Buffer;
   /** circuit public inputs (as field elements) */
   publicInputs: bigint[];
-  /** optional unix timestamp */
-  expiryDateUnix?: number;
+  /** unix timestamp */
+  expiryDateUnix: number;
 };
+
+export function buildVerifyCall(input: VerifyCredentialInput): VerifyInput {
+  return {
+    proof: input.proof as unknown as Groth16Proof,
+    public_inputs: input.publicInputs.map((x) => BigInt(x)),
+  };
+}
 
 export type VerifyBatchInput = VerifyInput;
 
@@ -49,6 +57,8 @@ const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
       return PassportError.BatchTooLarge;
     case "UnknownRegistryRoot":
       return PassportError.UnknownRegistryRoot;
+    case "CredentialExpired":
+      return PassportError.CredentialExpired;
     default:
       return PassportError.Unknown;
   }
@@ -87,12 +97,7 @@ export class PassportClient {
   async verifyCredential(
     input: VerifyCredentialInput,
   ): Promise<{ success: boolean; error?: string }> {
-    const proofs: VerifyInput[] = [
-      {
-        proof: input.proof as unknown as Groth16Proof,
-        public_inputs: input.publicInputs.map((x) => BigInt(x)),
-      },
-    ];
+    const proofs: VerifyInput[] = [buildVerifyCall(input)];
 
     const tx = await this.typed.verify_batch({ proofs });
     const { result } = await tx.signAndSend();

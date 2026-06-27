@@ -65,6 +65,8 @@ pub enum Error {
     BatchTooLarge = 6,
     /// The registry root is not in the approved allow-list.
     UnknownRegistryRoot = 7,
+    /// The credential has expired.
+    CredentialExpired = 8,
 }
 
 #[contracttype]
@@ -297,6 +299,7 @@ impl AgentPassportValidator {
                         Error::NullifierUsed => Some(Symbol::new(&env, "NullifierUsed")),
                         Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
                         Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
+                        Error::CredentialExpired => Some(Symbol::new(&env, "CredentialExpired")),
                         _ => Some(Symbol::new(&env, "Error")),
                     };
                     results.push_back(VerifyResult {
@@ -502,9 +505,23 @@ impl AgentPassportValidator {
         env: Env,
         actor: Address,
         root: BytesN<32>,
+        expiry_date_unix: u64,
         success: bool,
     ) -> Result<bool, Error> {
         actor.require_auth();
+
+        let current_time = env.ledger().timestamp();
+        if expiry_date_unix < current_time {
+            return Err(Error::CredentialExpired);
+        }
+
+        let thirty_days_in_secs = 30 * 24 * 60 * 60;
+        if expiry_date_unix < current_time + thirty_days_in_secs {
+            env.events().publish(
+                (Symbol::new(&env, "credential_expired"),),
+                expiry_date_unix,
+            );
+        }
 
         let instance = env.storage().instance();
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);

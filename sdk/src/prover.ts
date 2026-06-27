@@ -29,6 +29,7 @@ export interface PublicInputs {
   nullifierHash: string;
   agentId: string;
   spendCap: string;
+  expiryDateUnix: string;
 }
 
 /** Private + public witness for `agent_passport.circom`. All values are decimal strings. */
