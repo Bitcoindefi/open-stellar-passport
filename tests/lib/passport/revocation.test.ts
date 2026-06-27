@@ -8,6 +8,7 @@ import {
   validateRevocationInput,
   isValidRevocationReason,
   resetRevocationStore,
+  buildRevocationWebhookPayload,
   VALID_REVOCATION_REASONS,
   type RevocationReason,
 } from "@/lib/passport/revocation"
@@ -156,7 +157,6 @@ describe("passport revocation", () => {
   // ─── webhook payload ──────────────────────────────────────────────
   it("builds correct webhook payload", () => {
     const record = revokePassport("passport-123", { reason: "security_compromise", notes: "Key leaked" })
-    const { buildRevocationWebhookPayload } = await import("@/lib/passport/revocation")
     const payload = buildRevocationWebhookPayload(record)
 
     expect(payload).toEqual({
@@ -169,8 +169,9 @@ describe("passport revocation", () => {
   })
 
   // ─── listRevocations ─────────────────────────────────────────────
-  it("lists all revocations sorted by revokedAt desc", () => {
+  it("lists all revocations sorted by revokedAt desc", async () => {
     revokePassport("passport-a", { reason: "policy_violation" })
+    await new Promise((r) => setTimeout(r, 5))
     revokePassport("passport-b", { reason: "other" })
 
     const revocations = listRevocations()
