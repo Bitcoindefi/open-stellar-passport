@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { GET } from "./route";
-import { globalPassportStore } from "../../../../src/lib/passport-store";
-import { revokePassport, _reset as _resetRevocation } from "../../../../src/lib/passport/revocation-store";
+import { globalPassportStore } from "../../../src/lib/passport-store";
+import { revokePassport, _reset as _resetRevocation } from "../../../src/lib/passport/revocation-store";
 import { NextRequest } from "next/server";
 
 // Mock next/server since next is not installed in the Vite frontend workspace

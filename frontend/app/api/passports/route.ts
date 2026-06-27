@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { globalPassportStore, PassportRecord } from "../../../../src/lib/passport-store";
-import { isRevoked } from "../../../../src/lib/passport/revocation-store";
+import { globalPassportStore, PassportRecord } from "../../../src/lib/passport-store";
+import { isRevoked } from "../../../src/lib/passport/revocation-store";
 
 function getStatus(passport: PassportRecord): "active" | "suspended" | "revoked" | "expired" {
   if (isRevoked(passport.agentId)) {
