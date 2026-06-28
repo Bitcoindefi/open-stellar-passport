@@ -31,5 +31,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/leocagli/open-stellar-passport.git"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
   }
 }
