@@ -52,6 +52,61 @@ export interface SorobanProof {
 }
 
 const FIELD_HEX = 64; // 32-byte BE field element.
+const MERKLE_DEPTH = 20;
+const FIELD_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+const PATH_INDEX_LIMIT = 1n << BigInt(MERKLE_DEPTH);
+
+const parseDecimalField = (name: string, value: string): bigint => {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error(`${name} must be a decimal integer string`);
+  }
+
+  const parsed = BigInt(value);
+  if (parsed >= FIELD_MODULUS) {
+    throw new Error(`${name} must be smaller than the BN254 scalar field modulus`);
+  }
+  return parsed;
+};
+
+const parsePositiveField = (name: string, value: string): bigint => {
+  const parsed = parseDecimalField(name, value);
+  if (parsed <= 0n) throw new Error(`${name} must be greater than zero`);
+  return parsed;
+};
+
+export function validatePassportSecretInputs(secret: {
+  privateKey: string;
+  agentId: string;
+  pathElements: string[];
+  pathIndices: string;
+}): void {
+  parsePositiveField("privateKey", secret.privateKey);
+  parsePositiveField("agentId", secret.agentId);
+
+  if (secret.pathElements.length !== MERKLE_DEPTH) {
+    throw new Error(`pathElements must contain exactly ${MERKLE_DEPTH} entries`);
+  }
+  secret.pathElements.forEach((value, i) => parseDecimalField(`pathElements[${i}]`, value));
+
+  const pathIndices = parseDecimalField("pathIndices", secret.pathIndices);
+  if (pathIndices >= PATH_INDEX_LIMIT) {
+    throw new Error(`pathIndices must fit in ${MERKLE_DEPTH} bits`);
+  }
+}
+
+export function validatePassportWitness(witness: PassportWitness): void {
+  validatePassportSecretInputs(witness);
+
+  parseDecimalField("registryRoot", witness.registryRoot);
+  parseDecimalField("nullifierHash", witness.nullifierHash);
+
+  const spendCap = parsePositiveField("spendCap", witness.spendCap);
+  const balance = parseDecimalField("balance", witness.balance);
+  if (balance < spendCap) {
+    throw new Error("balance must be greater than or equal to spendCap");
+  }
+}
 
 const be32 = (dec: string | bigint): string => {
   const h = BigInt(dec).toString(16);
@@ -102,6 +157,8 @@ export async function derivePublicInputs(
   secret: { privateKey: string; agentId: string; pathElements: string[]; pathIndices: string },
   witnessWasm: Artifact,
 ): Promise<{ registryRoot: string; nullifierHash: string }> {
+  validatePassportSecretInputs(secret);
+
   const { type, data } = await snarkjs.wtns.calculate(secret, witnessWasm as any, undefined as any);
   const w = await snarkjs.wtns.exportJson({ type, data } as any);
   return { registryRoot: w[1].toString(), nullifierHash: w[2].toString() };
@@ -115,6 +172,8 @@ export async function generatePassportProof(
   witness: PassportWitness,
   artifacts: PassportArtifacts,
 ): Promise<SorobanProof> {
+  validatePassportWitness(witness);
+
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     witness,
     artifacts.wasm as any,

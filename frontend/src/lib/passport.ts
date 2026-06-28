@@ -86,6 +86,21 @@ const buf = (hex: string) => Buffer.from(hex, "hex");
 const fetchBytes = async (url: string) =>
   new Uint8Array(await (await fetch(url)).arrayBuffer());
 
+const FIELD_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+export function validateSpendCap(spendCap: string): void {
+  if (!/^[0-9]+$/.test(spendCap)) {
+    throw new Error("spendCap must be a decimal integer string");
+  }
+
+  const parsed = BigInt(spendCap);
+  if (parsed <= 0n) throw new Error("spendCap must be greater than zero");
+  if (parsed >= FIELD_MODULUS) {
+    throw new Error("spendCap must be smaller than the BN254 scalar field modulus");
+  }
+}
+
 function toSoroban(
   raw: snarkjs.Groth16Proof,
   publicSignals: string[],
@@ -131,6 +146,8 @@ function client(publicKey = TESTNET_CONFIG.viewerPublicKey) {
  * public root/nullifier via the helper circuit, then prove the full circuit.
  */
 export async function mintPassport(spendCap: string): Promise<MintedProof> {
+  validateSpendCap(spendCap);
+
   const privateKey = rndField();
   const agentId = rndAgentId();
   const balance = (BigInt(spendCap) + BigInt(rndAgentId())).toString(); // > cap, hidden

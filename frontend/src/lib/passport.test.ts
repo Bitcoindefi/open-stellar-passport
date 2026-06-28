@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePaymentAuthorization, parseContractError } from "./passport";
+import {
+  evaluatePaymentAuthorization,
+  parseContractError,
+  validateSpendCap,
+} from "./passport";
 
 describe("parseContractError", () => {
   it("maps Soroban contract error codes to generated validator names", () => {
@@ -39,5 +43,25 @@ describe("evaluatePaymentAuthorization", () => {
       authorized: false,
       reason: "No passport — agent not verified",
     });
+  });
+});
+
+describe("validateSpendCap", () => {
+  it("accepts positive integer spend caps", () => {
+    expect(() => validateSpendCap("1")).not.toThrow();
+    expect(() => validateSpendCap("500000000")).not.toThrow();
+  });
+
+  it.each([
+    ["0", /greater than zero/i],
+    ["-1", /decimal integer string/i],
+    ["1.5", /decimal integer string/i],
+    ["abc", /decimal integer string/i],
+    [
+      "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+      /smaller than/i,
+    ],
+  ])("rejects invalid spendCap %s", (spendCap, message) => {
+    expect(() => validateSpendCap(spendCap)).toThrow(message);
   });
 });

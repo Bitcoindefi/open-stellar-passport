@@ -10,6 +10,8 @@ export {
   generatePassportProof,
   toSorobanProof,
   derivePublicInputs,
+  validatePassportSecretInputs,
+  validatePassportWitness,
   type PassportArtifacts,
   type PassportWitness,
   type PublicInputs,

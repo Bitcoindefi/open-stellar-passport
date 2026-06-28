@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Groth16Proof as SnarkProof } from "snarkjs";
-import { toSorobanProof } from "./prover";
+import {
+  toSorobanProof,
+  validatePassportSecretInputs,
+  validatePassportWitness,
+  type PassportWitness,
+} from "./prover";
 
 const field = (value: number) => value.toString();
 
@@ -14,6 +19,17 @@ const sampleProof = {
 } as SnarkProof;
 
 const word = (value: number) => value.toString(16).padStart(64, "0");
+
+const validWitness = (): PassportWitness => ({
+  registryRoot: "11",
+  nullifierHash: "12",
+  agentId: "42",
+  spendCap: "500",
+  privateKey: "123456789",
+  balance: "1000",
+  pathElements: Array.from({ length: 20 }, (_, i) => String(i + 1)),
+  pathIndices: "0",
+});
 
 describe("toSorobanProof", () => {
   it("encodes G1 and G2 coordinates in the contract byte order", () => {
@@ -45,5 +61,54 @@ describe("toSorobanProof", () => {
     expect(() => toSorobanProof(overflowingProof, [])).toThrow(
       /field element overflow/i,
     );
+  });
+});
+
+describe("validatePassportWitness", () => {
+  it("accepts a complete, in-field witness", () => {
+    expect(() => validatePassportWitness(validWitness())).not.toThrow();
+  });
+
+  it.each([
+    ["spendCap", { spendCap: "0" }, /spendCap must be greater than zero/i],
+    ["agentId", { agentId: "0" }, /agentId must be greater than zero/i],
+    ["balance", { balance: "499" }, /balance must be greater than or equal to spendCap/i],
+    ["decimal", { spendCap: "1.5" }, /spendCap must be a decimal integer string/i],
+    ["negative", { balance: "-1" }, /balance must be a decimal integer string/i],
+  ])("rejects invalid %s input", (_name, patch, message) => {
+    expect(() => validatePassportWitness({ ...validWitness(), ...patch })).toThrow(message);
+  });
+
+  it("rejects field elements outside the circuit field", () => {
+    const fieldModulus =
+      "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+
+    expect(() =>
+      validatePassportWitness({ ...validWitness(), registryRoot: fieldModulus }),
+    ).toThrow(/registryRoot must be smaller than/i);
+  });
+
+  it("rejects malformed Merkle path inputs", () => {
+    expect(() =>
+      validatePassportWitness({ ...validWitness(), pathElements: ["1"] }),
+    ).toThrow(/pathElements must contain exactly 20 entries/i);
+
+    expect(() =>
+      validatePassportWitness({
+        ...validWitness(),
+        pathElements: Array.from({ length: 20 }, () => "1"),
+        pathIndices: String(1 << 20),
+      }),
+    ).toThrow(/pathIndices must fit in 20 bits/i);
+  });
+});
+
+describe("validatePassportSecretInputs", () => {
+  it("validates the helper witness inputs used to derive public inputs", () => {
+    const { privateKey, agentId, pathElements, pathIndices } = validWitness();
+
+    expect(() =>
+      validatePassportSecretInputs({ privateKey, agentId, pathElements, pathIndices }),
+    ).not.toThrow();
   });
 });
