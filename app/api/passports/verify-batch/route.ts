@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { verifyPassportBatch } from "@/lib/passport/passport"
+import { appendAdminAuditEntry } from "@/lib/passport/audit-log"
 
 export async function POST(req: Request) {
   try {
@@ -20,7 +21,16 @@ export async function POST(req: Request) {
       )
     }
 
+    const actor = req.headers.get("x-stellar-address") || "admin"
     const verification = verifyPassportBatch(passportIds)
+
+    appendAdminAuditEntry({
+      action: "batch_verify",
+      actor,
+      target: passportIds.join(","),
+      metadata: { count: passportIds.length },
+    })
+
     return NextResponse.json(verification, { status: 200, headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     return NextResponse.json(

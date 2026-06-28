@@ -49,7 +49,9 @@ describe("evaluatePaymentAuthorization", () => {
   it.each(["0", "-1", "1.5", "abc"])(
     "rejects invalid payment amount %s",
     (amount) => {
-      expect(evaluatePaymentAuthorization({ spend_cap: "500" }, amount)).toEqual({
+      expect(
+        evaluatePaymentAuthorization({ spend_cap: "500" }, amount),
+      ).toEqual({
         authorized: false,
         cap: "500",
         reason: "Invalid payment amount",
@@ -217,8 +219,7 @@ describe("PassportStore — circuit breaker", () => {
     store.authorizePassportSpend("42", 200, config);
     store.authorizePassportSpend("42", 50, config); // success, resets
 
-    for (let i = 0; i < 9; i++)
-      store.authorizePassportSpend("42", 200, config);
+    for (let i = 0; i < 9; i++) store.authorizePassportSpend("42", 200, config);
 
     expect(store.authorizePassportSpend("42", 200, config)).toEqual({
       ok: false,
@@ -279,13 +280,11 @@ describe("PassportStore — circuit breaker", () => {
       circuitBreaker: { maxConsecutiveFailures: 10 },
     };
 
-    for (let i = 0; i < 4; i++)
-      store.authorizePassportSpend("42", 200, config);
+    for (let i = 0; i < 4; i++) store.authorizePassportSpend("42", 200, config);
 
     store.authorizePassportSpend("42", 50, config);
 
-    for (let i = 0; i < 9; i++)
-      store.authorizePassportSpend("42", 200, config);
+    for (let i = 0; i < 9; i++) store.authorizePassportSpend("42", 200, config);
 
     expect(store.authorizePassportSpend("42", 200, config)).toEqual({
       ok: false,
@@ -331,7 +330,9 @@ describe("PassportStore — expiry", () => {
     // Still within 30-day window
     vi.setSystemTime(new Date("2025-01-15T00:00:00.000Z").getTime());
 
-    expect(store.authorizePassportSpend("agent-exp-2", 50)).toEqual({ ok: true });
+    expect(store.authorizePassportSpend("agent-exp-2", 50)).toEqual({
+      ok: true,
+    });
   });
 
   it("rejects spend for an expired passport", () => {
@@ -354,7 +355,9 @@ describe("PassportStore — expiry", () => {
     // Existing tests create stores without calling issuePassport — they must
     // still pass spend-limit / circuit-breaker checks unaffected.
     store = new PassportStore();
-    expect(store.authorizePassportSpend("agent-no-record", 10)).toEqual({ ok: true });
+    expect(store.authorizePassportSpend("agent-no-record", 10)).toEqual({
+      ok: true,
+    });
   });
 
   it("getPassport returns the stored record", () => {
@@ -417,7 +420,9 @@ describe("PassportStore — renewal", () => {
     expect(renewal.ok).toBe(true);
 
     // Now should pass
-    expect(store.authorizePassportSpend("agent-renew-2", 50)).toEqual({ ok: true });
+    expect(store.authorizePassportSpend("agent-renew-2", 50)).toEqual({
+      ok: true,
+    });
   });
 
   it("supports a custom TTL on renewal", () => {
@@ -467,7 +472,9 @@ describe("PassportStore — revocation via revocation-store", () => {
 
   it("authorizes spend before passport is revoked", () => {
     store = new PassportStore();
-    expect(store.authorizePassportSpend("agent-rv-1", 10)).toEqual({ ok: true });
+    expect(store.authorizePassportSpend("agent-rv-1", 10)).toEqual({
+      ok: true,
+    });
   });
 
   it("returns PassportRevoked after revokePassport() is called", () => {

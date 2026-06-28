@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Groth16Proof as SnarkProof } from "snarkjs";
-import { toSorobanProof } from "./prover";
+import {
+  buildMultiCredentialWitness,
+  flattenSorobanProof,
+  toSorobanProof,
+} from "./prover";
 
 const field = (value: number) => value.toString();
 
@@ -44,6 +48,53 @@ describe("toSorobanProof", () => {
 
     expect(() => toSorobanProof(overflowingProof, [])).toThrow(
       /field element overflow/i,
+    );
+  });
+});
+
+describe("flattenSorobanProof", () => {
+  it("concatenates the proof parts into a single buffer", () => {
+    const encoded = toSorobanProof(sampleProof, ["11", "12", "13", "14"]);
+    const flattened = flattenSorobanProof(encoded);
+
+    expect(flattened.toString("hex")).toBe(
+      encoded.proofHex.a + encoded.proofHex.b + encoded.proofHex.c,
+    );
+  });
+});
+
+describe("buildMultiCredentialWitness", () => {
+  it("builds a combined witness for multiple credentials", () => {
+    expect(
+      buildMultiCredentialWitness([
+        {
+          root: "101",
+          attributeHash: "202",
+          witness: ["11", "12"],
+          pathIndices: "1",
+          artifacts: { wasm: "multi.wasm", zkey: "multi.zkey", vk: {} },
+        },
+        {
+          root: "303",
+          attributeHash: "404",
+          witness: ["21", "22"],
+          pathIndices: "0",
+        },
+      ]),
+    ).toEqual({
+      credentialRoots: ["101", "303"],
+      attributeHashes: ["202", "404"],
+      witnesses: [
+        ["11", "12"],
+        ["21", "22"],
+      ],
+      pathIndices: ["1", "0"],
+    });
+  });
+
+  it("requires at least one credential", () => {
+    expect(() => buildMultiCredentialWitness([])).toThrow(
+      /at least one credential/i,
     );
   });
 });
