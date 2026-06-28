@@ -22,7 +22,10 @@ export async function GET() {
 
   if (mockChecks.passportStore === "error") {
     status = "unhealthy";
-  } else if (mockChecks.webhookDispatch === "error" || mockChecks.cronJobs === "error") {
+  } else if (
+    mockChecks.webhookDispatch === "error" ||
+    mockChecks.cronJobs === "error"
+  ) {
     status = "degraded";
   }
 
@@ -34,13 +37,14 @@ export async function GET() {
   const passportCount = passports.length;
   const activeCount = passports.filter((p) => {
     const isExpired = new Date(p.expiresAt) < new Date();
-    return !isExpired && !isRevoked(p.agentId);
+    return !isExpired && !isRevoked(p.agentId, p.serviceContext);
   }).length;
 
   // Calculate uptime
-  const uptimeMs = typeof process !== "undefined" && typeof process.uptime === "function"
-    ? Math.floor(process.uptime() * 1000)
-    : Date.now() - startTime;
+  const uptimeMs =
+    typeof process !== "undefined" && typeof process.uptime === "function"
+      ? Math.floor(process.uptime() * 1000)
+      : Date.now() - startTime;
 
   return NextResponse.json(
     {
@@ -60,6 +64,6 @@ export async function GET() {
       headers: {
         "Cache-Control": "no-store",
       },
-    }
+    },
   );
 }

@@ -47,6 +47,13 @@ describe("revocation-store", () => {
     expect(isRevoked("agent-9")).toBe(false);
   });
 
+  it("does not affect other service contexts for the same agent", () => {
+    revokePassport("agent-8", "data-access");
+    expect(isRevoked("agent-8", "data-access")).toBe(true);
+    expect(isRevoked("agent-8", "payment-routing")).toBe(false);
+    expect(isRevoked("agent-8")).toBe(false);
+  });
+
   it("_reset clears the registry between tests", () => {
     revokePassport("agent-10");
     _reset();

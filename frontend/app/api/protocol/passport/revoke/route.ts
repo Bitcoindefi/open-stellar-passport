@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revokePassport } from "../../../../../src/lib/passport/revocation-store";
+import {
+  DEFAULT_SERVICE_CONTEXT,
+  isValidServiceContext,
+} from "../../../../../src/lib/passport-store";
 import { checkRateLimit } from "../../../../../src/lib/rate-limit";
 
 /** 10 revocations per IP per minute — generous to handle emergency use cases. */
@@ -43,14 +47,36 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ ok: false, reason: "MissingFields" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, reason: "MissingFields" },
+      { status: 400 },
+    );
   }
 
-  const { agentId } = body ?? {};
+  const { agentId, serviceContext } = body ?? {};
   if (typeof agentId !== "string" || agentId.trim() === "") {
-    return NextResponse.json({ ok: false, reason: "MissingFields" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, reason: "MissingFields" },
+      { status: 400 },
+    );
   }
 
-  revokePassport(agentId);
+  const normalizedServiceContext =
+    serviceContext == null
+      ? DEFAULT_SERVICE_CONTEXT
+      : typeof serviceContext === "string"
+        ? serviceContext.trim()
+        : null;
+  if (
+    !normalizedServiceContext ||
+    !isValidServiceContext(normalizedServiceContext)
+  ) {
+    return NextResponse.json(
+      { ok: false, reason: "InvalidServiceContext" },
+      { status: 400 },
+    );
+  }
+
+  revokePassport(agentId, normalizedServiceContext);
   return NextResponse.json({ ok: true, revokedAt: new Date().toISOString() });
 }

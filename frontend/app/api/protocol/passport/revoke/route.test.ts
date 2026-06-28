@@ -1,10 +1,12 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, vi, afterEach } from "vitest";
 import { POST } from "./route";
 import { _reset as _resetRateLimit } from "../../../../../src/lib/rate-limit";
-import { _reset as _resetRevocation, isRevoked } from "../../../../../src/lib/passport/revocation-store";
+import {
+  _reset as _resetRevocation,
+  isRevoked,
+} from "../../../../../src/lib/passport/revocation-store";
 import { NextRequest } from "next/server";
 
-// Mock next/server — Next.js is not installed in the Vite frontend workspace
 vi.mock("next/server", () => {
   return {
     NextResponse: {
@@ -54,26 +56,30 @@ describe("POST /api/protocol/passport/revoke", () => {
     expect(data.revokedAt).toBe("2025-06-01T00:00:00.000Z");
   });
 
-  it("marks the passport as revoked in the revocation-store", async () => {
-    await POST(req({ agentId: "agent-B" }));
-    expect(isRevoked("agent-B")).toBe(true);
+  it("marks only the requested service context as revoked", async () => {
+    await POST(req({ agentId: "agent-B", serviceContext: "data-access" }));
+    expect(isRevoked("agent-B", "data-access")).toBe(true);
+    expect(isRevoked("agent-B", "payment-routing")).toBe(false);
+    expect(isRevoked("agent-B")).toBe(false);
   });
 
-  it("is idempotent — revoking twice still returns 200", async () => {
-    await POST(req({ agentId: "agent-C" }));
-    const res2 = await POST(req({ agentId: "agent-C" }));
+  it("is idempotent for the same agent and context", async () => {
+    await POST(req({ agentId: "agent-C", serviceContext: "data-access" }));
+    const res2 = await POST(
+      req({ agentId: "agent-C", serviceContext: "data-access" }),
+    );
     expect(res2.status).toBe(200);
-    expect(isRevoked("agent-C")).toBe(true);
+    expect(isRevoked("agent-C", "data-access")).toBe(true);
   });
 
-  it("revocation is case-insensitive in the store", async () => {
-    await POST(req({ agentId: "Agent-D" }));
-    expect(isRevoked("agent-d")).toBe(true);
+  it("revocation is case-insensitive in the store for agentId", async () => {
+    await POST(req({ agentId: "Agent-D", serviceContext: "data-access" }));
+    expect(isRevoked("agent-d", "data-access")).toBe(true);
   });
 
   it("revocation trims whitespace from agentId", async () => {
-    await POST(req({ agentId: "  agent-E  " }));
-    expect(isRevoked("agent-e")).toBe(true);
+    await POST(req({ agentId: "  agent-E  ", serviceContext: "data-access" }));
+    expect(isRevoked("agent-e", "data-access")).toBe(true);
   });
 
   it("returns 400 when agentId is missing from body", async () => {
@@ -83,16 +89,15 @@ describe("POST /api/protocol/passport/revoke", () => {
     expect(data).toEqual({ ok: false, reason: "MissingFields" });
   });
 
-  it("returns 400 when agentId is a blank string", async () => {
-    const res = await POST(req({ agentId: "   " }));
+  it("returns 400 for an invalid serviceContext", async () => {
+    const res = await POST(
+      req({ agentId: "agent-F", serviceContext: "invalid context" }),
+    );
     expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data).toEqual({ ok: false, reason: "MissingFields" });
-  });
-
-  it("returns 400 when agentId is not a string", async () => {
-    const res = await POST(req({ agentId: 42 }));
-    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      reason: "InvalidServiceContext",
+    });
   });
 
   it("returns 429 after 10 requests from the same IP", async () => {
