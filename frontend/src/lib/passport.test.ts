@@ -120,6 +120,88 @@ describe("PassportStore — spend limits", () => {
   });
 });
 
+describe("PassportStore — spend analytics", () => {
+  let store: PassportStore;
+
+  const config = {
+    spendLimits: {
+      dailyMaxXlm: 50_000_000,
+      weeklyMaxXlm: 100_000_000,
+    },
+  };
+
+  beforeEach(() => {
+    store = new PassportStore();
+    vi.useFakeTimers({
+      now: new Date("2026-06-26T12:00:00.000Z").getTime(),
+    });
+  });
+
+  afterEach(() => {
+    store.reset();
+    vi.useRealTimers();
+  });
+
+  it("sums successful authorize events and computes remaining stroops", () => {
+    store.authorizePassportSpend("bot-42", 5_000_000, config);
+    store.authorizePassportSpend("bot-42", 4_000_000, config);
+    store.authorizePassportSpend("bot-42", 5_500_000, config);
+
+    expect(store.getSpendAnalytics("bot-42")).toEqual({
+      agentId: "bot-42",
+      period: {
+        dayStart: "2026-06-26T00:00:00.000Z",
+        weekStart: "2026-06-22T00:00:00.000Z",
+      },
+      spent: {
+        daily: "14500000",
+        weekly: "14500000",
+      },
+      limits: {
+        dailyMaxXlm: "50000000",
+        weeklyMaxXlm: "100000000",
+      },
+      remaining: {
+        daily: "35500000",
+        weekly: "85500000",
+      },
+    });
+  });
+
+  it("resets daily totals at UTC midnight and weekly totals on Monday UTC", () => {
+    vi.setSystemTime(new Date("2026-06-21T23:59:59.000Z"));
+    store.authorizePassportSpend("bot-42", 1_000_000, config);
+    vi.setSystemTime(new Date("2026-06-22T00:00:00.000Z"));
+    store.authorizePassportSpend("bot-42", 2_000_000, config);
+    vi.setSystemTime(new Date("2026-06-23T00:00:00.000Z"));
+    store.authorizePassportSpend("bot-42", 3_000_000, config);
+
+    expect(store.getSpendAnalytics("bot-42")).toMatchObject({
+      period: {
+        dayStart: "2026-06-23T00:00:00.000Z",
+        weekStart: "2026-06-22T00:00:00.000Z",
+      },
+      spent: {
+        daily: "3000000",
+        weekly: "5000000",
+      },
+    });
+  });
+
+  it("returns zero totals for a known passport without spend events", () => {
+    store.issuePassport("known-agent", 100_000_000, "hash");
+
+    expect(store.getSpendAnalytics("known-agent")).toMatchObject({
+      spent: { daily: "0", weekly: "0" },
+      remaining: { daily: "0", weekly: "0" },
+    });
+  });
+
+  it("returns undefined when the agent has no passport or spend history", () => {
+    expect(store.getSpendAnalytics("missing-agent")).toBeUndefined();
+  });
+});
+
 describe("PassportStore — circuit breaker", () => {
   let store: PassportStore;
 

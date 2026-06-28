@@ -16,8 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: stable
           targets: wasm32v1-none
       - name: Run contract tests
         run: cargo test --manifest-path contracts/agent-passport-validator/Cargo.toml
