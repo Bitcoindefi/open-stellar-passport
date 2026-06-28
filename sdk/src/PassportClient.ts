@@ -32,6 +32,19 @@ export type VerifyBatchResult = VerifyResult & {
   error?: PassportError;
 };
 
+export type PassportClientOptions = {
+  baseUrl?: string;
+  apiKey?: string;
+  revocationCacheMs?: number;
+  rpc?: unknown;
+  contractId?: string;
+};
+
+type PassportRevocationCacheEntry = {
+  value: boolean;
+  expires: number;
+};
+
 const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
   if (typeof err !== "string") return undefined;
   switch (err) {
@@ -61,18 +74,43 @@ const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
  * generated typed contract bindings under `sdk/bindings`.
  */
 export class PassportClient {
-  private readonly typed: Client;
+  private readonly typed?: Client;
+  private readonly baseUrl?: string;
+  private readonly apiKey?: string;
+  private readonly revocationCacheMs: number;
+  private readonly revocationCache = new Map<string, PassportRevocationCacheEntry>();
 
   /**
-   * @param rpc - Soroban RPC server instance (not directly used; kept for API parity)
-   * @param contractId - validator contract ID
+   * @param rpcOrOptions - Soroban RPC server instance or client options.
+   * @param contractId - validator contract ID when using the legacy constructor.
    */
-  constructor(rpc: unknown, contractId: string) {
-    this.typed = new Client({
-      contractId,
-      networkPassphrase: networks.testnet.networkPassphrase,
-      rpcUrl: (rpc as any)?.rpcUrl ?? "",
-    });
+  constructor(rpcOrOptions: unknown, contractId?: string) {
+    const hasOptions =
+      typeof rpcOrOptions === "object" &&
+      rpcOrOptions !== null &&
+      contractId === undefined;
+    const options = hasOptions ? (rpcOrOptions as PassportClientOptions) : undefined;
+
+    this.baseUrl = options?.baseUrl;
+    this.apiKey = options?.apiKey;
+    this.revocationCacheMs = options?.revocationCacheMs ?? 60_000;
+
+    const resolvedContractId = contractId ?? options?.contractId;
+    const resolvedRpc = contractId !== undefined ? rpcOrOptions : options?.rpc;
+
+    if (resolvedContractId) {
+      this.typed = new Client({
+        contractId: resolvedContractId,
+        networkPassphrase: networks.testnet.networkPassphrase,
+        rpcUrl: (resolvedRpc as any)?.rpcUrl ?? "",
+      });
+    }
+
+    if (!this.typed && !this.baseUrl) {
+      throw new Error(
+        "PassportClient requires either rpc+contractId or baseUrl for revocation checks",
+      );
+    }
   }
 
   /**
@@ -87,6 +125,12 @@ export class PassportClient {
   async verifyCredential(
     input: VerifyCredentialInput,
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.typed) {
+      throw new Error(
+        "PassportClient must be created with rpc+contractId to verify credentials",
+      );
+    }
+
     const proofs: VerifyInput[] = [
       {
         proof: input.proof as unknown as Groth16Proof,
@@ -110,6 +154,12 @@ export class PassportClient {
    * limit.
    */
   async verifyBatch(inputs: VerifyBatchInput[]): Promise<VerifyBatchResult[]> {
+    if (!this.typed) {
+      throw new Error(
+        "PassportClient must be created with rpc+contractId to verify batch proofs",
+      );
+    }
+
     const BATCH_LIMIT = 8;
     const out: VerifyBatchResult[] = [];
 
@@ -130,13 +180,74 @@ export class PassportClient {
     return out;
   }
 
+  async isRevoked(passportId: string): Promise<boolean>;
+  async isRevoked(root: Buffer): Promise<boolean>;
+  async isRevoked(identifier: string | Buffer): Promise<boolean> {
+    if (typeof identifier === "string") {
+      return this.isRevokedByPassportId(identifier);
+    }
+
+    return this.isRevokedByRoot(identifier);
+  }
+
+  private async isRevokedByPassportId(passportId: string): Promise<boolean> {
+    if (!this.baseUrl) {
+      throw new Error(
+        "PassportClient must be created with baseUrl to check passport revocation by ID",
+      );
+    }
+
+    const now = Date.now();
+    const cached = this.revocationCache.get(passportId);
+    if (cached && cached.expires >= now) {
+      return cached.value;
+    }
+
+    const url = new URL(
+      `/api/protocol/passport/${encodeURIComponent(passportId)}`,
+      this.baseUrl,
+    );
+
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
+
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch passport status: ${response.status}`);
+    }
+
+    const body = (await response.json()) as { status?: unknown };
+    const revoked = body.status === "revoked";
+    this.revocationCache.set(passportId, {
+      value: revoked,
+      expires: revoked ? Infinity : now + this.revocationCacheMs,
+    });
+
+    return revoked;
+  }
+
   /**
    * Check whether a registry root has been revoked.
    *
    * The contract does not expose a dedicated `is_revoked` read method; this
    * scans the audit log entries for a matching `revoke` action.
    */
-  async isRevoked(root: Buffer): Promise<boolean> {
+  private async isRevokedByRoot(root: Buffer): Promise<boolean> {
+    if (!this.typed) {
+      throw new Error(
+        "PassportClient must be created with rpc+contractId to check root revocation",
+      );
+    }
+
     const count = await this.typed.audit_count();
     const total = count.result ?? count;
 
