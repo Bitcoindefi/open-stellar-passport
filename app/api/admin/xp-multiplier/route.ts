@@ -9,7 +9,20 @@ const MAX_MULTIPLIER = 10
 const MIN_MULTIPLIER = 1
 const MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000
 
+function isAdmin(req: Request): boolean {
+  const adminKey = req.headers.get("x-admin-key")
+  return !!adminKey && adminKey === process.env.ADMIN_API_KEY
+}
+
+function unauthorized() {
+  return NextResponse.json(
+    { ok: false, error: "Unauthorized" },
+    { status: 401, headers: { "Cache-Control": "no-store" } },
+  )
+}
+
 export async function POST(req: Request) {
+  if (!isAdmin(req)) return unauthorized()
   try {
     const body = await req.json().catch(() => ({}))
 
@@ -86,7 +99,8 @@ export async function POST(req: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  if (!isAdmin(req)) return unauthorized()
   try {
     clearXPMultiplier()
 
