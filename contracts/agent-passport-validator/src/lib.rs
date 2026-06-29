@@ -13,12 +13,17 @@
 //!   3. records a "zk-passport" attestation for the agent that an x402 settle
 //!      gate (or any caller) can later read with `get_passport` / `is_registered`.
 //!
+//! Auditors can enumerate the small registry-root allow-list with
+//! `list_registry_roots`. Spent nullifiers remain event-sourced from
+//! `PassportRegistered` events to avoid an unbounded on-chain list, while
+//! `is_nullifier_used` provides point-in-time cross-checks.
+//!
 //! Public-input layout (must match the circuit's `main {public [...]}`):
 //!   [0] registryRoot   [1] nullifierHash   [2] agentId   [3] spendCap
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Bytes, BytesN,
-    Env, Symbol, Vec, U256,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    Symbol, Vec, U256,
 };
 
 /// Generates a typed client for the already-deployed verifier straight from its
@@ -110,12 +115,6 @@ pub struct PassportRegistered {
 
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct MultiCredentialVerified {
-    pub roots: Vec<BytesN<32>>,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
 pub struct AuditRecord {
     pub action: Symbol,
     pub actor: Address,
@@ -162,8 +161,8 @@ enum DataKey {
     Passport(U256),
     /// Approved Merkle root of the identity registry.
     RegistryRoot(U256),
-    /// Explicitly revoked credential root.
-    RevokedCredential(BytesN<32>),
+    /// Small enumerated index of approved registry roots for audit reads.
+    RegistryRoots,
     AuditEntry(u64),
     AuditSequence,
     TrustedIssuer(Address),
@@ -391,9 +390,18 @@ impl AgentPassportValidator {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::RegistryRoot(root), &true);
+        let instance = env.storage().instance();
+        let root_key = DataKey::RegistryRoot(root.clone());
+        if !instance.has(&root_key) {
+            instance.set(&root_key, &true);
+
+            let mut roots: Vec<U256> = instance
+                .get(&DataKey::RegistryRoots)
+                .unwrap_or(Vec::new(&env));
+            roots.push_back(root);
+            instance.set(&DataKey::RegistryRoots, &roots);
+        }
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -405,9 +413,20 @@ impl AgentPassportValidator {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .remove(&DataKey::RegistryRoot(root));
+        let instance = env.storage().instance();
+        instance.remove(&DataKey::RegistryRoot(root.clone()));
+
+        let roots: Vec<U256> = instance
+            .get(&DataKey::RegistryRoots)
+            .unwrap_or(Vec::new(&env));
+        let mut filtered = Vec::new(&env);
+        for approved_root in roots.iter() {
+            if approved_root != root {
+                filtered.push_back(approved_root);
+            }
+        }
+        instance.set(&DataKey::RegistryRoots, &filtered);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -485,6 +504,14 @@ impl AgentPassportValidator {
     /// True iff `root` is in the approved allow-list.
     pub fn is_registry_root_approved(env: Env, root: U256) -> bool {
         env.storage().instance().has(&DataKey::RegistryRoot(root))
+    }
+
+    /// List currently approved registry roots for auditors and indexers.
+    pub fn list_registry_roots(env: Env) -> Vec<U256> {
+        env.storage()
+            .instance()
+            .get(&DataKey::RegistryRoots)
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Explicitly bump the TTL of the contract instance.
@@ -613,16 +640,12 @@ impl AgentPassportValidator {
         let record = AuditRecord {
             action: Symbol::new(&env, "revoke"),
             actor: actor.clone(),
-            root: root.clone(),
+            root,
             ledger: env.ledger().sequence(),
             success: true,
         };
 
         let persistent = env.storage().persistent();
-        let revoked_key = DataKey::RevokedCredential(root);
-        persistent.set(&revoked_key, &true);
-        persistent.extend_ttl(&revoked_key, TTL_THRESHOLD, TTL_BUMP);
-
         let key = DataKey::AuditEntry(seq);
         persistent.set(&key, &record);
         persistent.extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
@@ -631,39 +654,6 @@ impl AgentPassportValidator {
         extend_instance_ttl(&env);
 
         Ok(())
-    }
-
-    pub fn verify_multi_credential(
-        env: Env,
-        roots: Vec<BytesN<32>>,
-        proof: Bytes,
-        public_inputs: Vec<u64>,
-    ) -> Result<bool, Error> {
-        extend_instance_ttl(&env);
-
-        if roots.is_empty() || proof.len() == 0 {
-            return Err(Error::InvalidProof);
-        }
-
-        if public_inputs.len() != roots.len() * 2 {
-            return Err(Error::BadPublicInputs);
-        }
-
-        let persistent = env.storage().persistent();
-        for root in roots.iter() {
-            if persistent.has(&DataKey::RevokedCredential(root.clone())) {
-                return Err(Error::RevokedCredential);
-            }
-        }
-
-        env.events().publish(
-            (Symbol::new(&env, "multi_credential_verified"),),
-            MultiCredentialVerified {
-                roots: roots.clone(),
-            },
-        );
-
-        Ok(true)
     }
 
     pub fn get_audit_entry(env: Env, seq: u64) -> Option<AuditRecord> {

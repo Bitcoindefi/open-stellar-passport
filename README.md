@@ -4,7 +4,7 @@
 
 Built for the [Stellar Hacks: Real-World ZK](https://dorahacks.io/hackathon/stellar-hacks-zk) hackathon. The trust layer that [Open-Stellar](https://github.com/leocagli/Open-Stellar) (and any agent-commerce hub on Stellar) was missing.
 
-### ▶ Live demo: **https://leocagli.github.io/open-stellar-passport/**
+### ▶ Live demo: **https://bitcoindefi.github.io/open-stellar-passport/**
 
 Generates a real Groth16 proof in your browser and verifies it on the deployed Stellar testnet contract — no wallet, no signup.
 
@@ -102,6 +102,7 @@ proves : publicKey = Poseidon2(privateKey, 0)
 - [x] **Phase 2** — [`AgentPassportValidator`](contracts/agent-passport-validator/) (stateful policy layer) + TypeScript SDK ✅
   - Validator contract: [`CDNSZUNEWFCGSPWLPDSWTENR2WPHKC34RGZQG7RJA54OPGTZGVVRFYBA`](https://stellar.expert/explorer/testnet/contract/CDNSZUNEWFCGSPWLPDSWTENR2WPHKC34RGZQG7RJA54OPGTZGVVRFYBA) (testnet)
   - Cross-contract calls the verifier, **burns the nullifier (anti-replay / anti-Sybil)**, mints a `zk-passport` attestation
+  - Audit views: `list_registry_roots()` enumerates the current root allow-list. Spent nullifiers stay event-sourced from `PassportRegistered` events, with `is_nullifier_used(...)` available for point checks so the contract avoids an unbounded nullifier list.
   - On-chain e2e: `verify_and_register` → minted ✅; **replay → `NullifierUsed` ✅**; tampered input → `InvalidProof` ✅ (5 unit tests run the real proof through the real verifier WASM)
   - [`@open-stellar/agent-passport`](sdk/) SDK: client-side proving (snarkjs) + typed client + the `authorizePayment` x402 gate
 - [x] **Phase 3** — live [demo frontend](frontend/) ✅

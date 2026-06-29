@@ -8,7 +8,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    Bytes, BytesN, Env, U256,
+    Bytes, BytesN, Env, IntoVal, Val, U256,
 };
 
 // Real proof bytes (G1 = x||y, G2 = x.c1||x.c0||y.c1||y.c0) from build/arg_proof.json.
@@ -60,10 +60,6 @@ fn real_public_inputs(env: &Env) -> Vec<U256> {
     )
 }
 
-fn credential_root(env: &Env, fill: u8) -> BytesN<32> {
-    BytesN::from_array(env, &[fill; 32])
-}
-
 /// Deploy the real verifier WASM + our validator, init the wiring, return both.
 fn setup(env: &Env, initial_root: U256) -> AgentPassportValidatorClient<'static> {
     let (_, _, client) = setup_with_id(env, initial_root);
@@ -110,6 +106,32 @@ fn registers_a_valid_passport() {
 
     let stored = client.get_passport(&agent_id).unwrap();
     assert_eq!(stored.nullifier, u256(&env, PI_NULLIFIER));
+}
+
+#[test]
+fn passport_registered_event_exposes_nullifier_for_audit_indexers() {
+    let env = Env::default();
+    let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+
+    let expected: Vec<(Address, Vec<Val>, Val)> = Vec::from_array(
+        &env,
+        [(
+            validator_addr.clone(),
+            (Symbol::new(&env, "PassportRegistered"),).into_val(&env),
+            PassportRegistered {
+                agent_id: u256(&env, PI_AGENT),
+                nullifier: u256(&env, PI_NULLIFIER),
+                spend_cap: u256(&env, PI_CAP),
+            }
+            .into_val(&env),
+        )],
+    );
+    assert_eq!(
+        env.events().all().filter_by_contract(&validator_addr),
+        expected
+    );
 }
 
 #[test]
@@ -312,6 +334,38 @@ fn can_manage_registry_roots() {
 }
 
 #[test]
+fn lists_current_registry_roots_for_auditors() {
+    let env = Env::default();
+    let initial_root = u256(&env, PI_ROOT);
+    let client = setup(&env, initial_root.clone());
+    let second_root = initial_root.add(&U256::from_u32(&env, 7));
+
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone()])
+    );
+
+    env.mock_all_auths();
+    client.add_registry_root(&second_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone(), second_root.clone()])
+    );
+
+    client.add_registry_root(&second_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone(), second_root.clone()])
+    );
+
+    client.remove_registry_root(&initial_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [second_root])
+    );
+}
+
+#[test]
 fn set_verifier_emits_event() {
     let env = Env::default();
     let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
@@ -396,53 +450,6 @@ fn renounce_admin() {
         &soroban_sdk::Vec::new(&env),
     );
     assert!(res.is_err());
-}
-
-#[test]
-fn verify_multi_credential_accepts_two_valid_roots() {
-    let env = Env::default();
-    let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
-    let actor = Address::generate(&env);
-    let root_a = credential_root(&env, 1);
-    let root_b = credential_root(&env, 2);
-    let roots = Vec::from_array(&env, [root_a.clone(), root_b.clone()]);
-    let proof = Bytes::from_slice(&env, &[7u8; 32]);
-    let public_inputs = Vec::from_array(&env, [11u64, 12u64, 21u64, 22u64]);
-
-    env.mock_all_auths();
-    client.issue_credential(&actor, &root_a);
-    client.issue_credential(&actor, &root_b);
-
-    let verified = client.verify_multi_credential(&roots, &proof, &public_inputs);
-    assert!(verified);
-    assert!(
-        env.events()
-            .all()
-            .filter_by_contract(&validator_addr)
-            .events()
-            .len()
-            >= 1
-    );
-}
-
-#[test]
-fn verify_multi_credential_fails_when_any_root_is_revoked() {
-    let env = Env::default();
-    let client = setup(&env, u256(&env, PI_ROOT));
-    let actor = Address::generate(&env);
-    let root_a = credential_root(&env, 3);
-    let root_b = credential_root(&env, 4);
-    let roots = Vec::from_array(&env, [root_a.clone(), root_b.clone()]);
-    let proof = Bytes::from_slice(&env, &[9u8; 32]);
-    let public_inputs = Vec::from_array(&env, [31u64, 32u64, 41u64, 42u64]);
-
-    env.mock_all_auths();
-    client.issue_credential(&actor, &root_a);
-    client.issue_credential(&actor, &root_b);
-    client.revoke_credential(&actor, &root_b);
-
-    let result = client.try_verify_multi_credential(&roots, &proof, &public_inputs);
-    assert_eq!(result, Err(Ok(Error::RevokedCredential)));
 }
 
 #[test]
