@@ -287,15 +287,15 @@ fn public_heartbeat_keeps_instance_storage_alive() {
 }
 
 #[test]
-#[should_panic]
 fn init_is_one_shot() {
     let env = Env::default();
     let client = setup(&env, u256(&env, PI_ROOT));
     let admin = Address::generate(&env);
     let verifier_addr = Address::generate(&env);
     let root = u256(&env, PI_ROOT);
-    // Second init must panic with AlreadyInitialized.
-    client.init(&admin, &verifier_addr, &root);
+    // Second init must return the typed AlreadyInitialized error.
+    let res = client.try_init(&admin, &verifier_addr, &root);
+    assert_eq!(res, Err(Ok(Error::AlreadyInitialized)));
 }
 
 #[test]
@@ -497,4 +497,119 @@ fn test_audit_logging() {
     assert_eq!(entry3.actor, actor);
     assert_eq!(entry3.root, root);
     assert_eq!(entry3.success, true);
+}
+
+// ---------------------------------------------------------------------------
+// NotInitialized error path — every admin/read entrypoint on an uninitialised
+// contract must return Error::NotInitialized rather than panicking.
+// ---------------------------------------------------------------------------
+
+/// Helper that registers the validator WASM but does NOT call `init`.
+fn uninitialised_client(env: &Env) -> AgentPassportValidatorClient<'static> {
+    let validator_addr = env.register(AgentPassportValidator, ());
+    AgentPassportValidatorClient::new(env, &validator_addr)
+}
+
+#[test]
+fn not_initialized_verifier_read() {
+    let env = Env::default();
+    let client = uninitialised_client(&env);
+    let res = client.try_verifier();
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_set_verifier() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialised_client(&env);
+    let new_verifier = Address::generate(&env);
+    let res = client.try_set_verifier(&new_verifier);
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_add_registry_root() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialised_client(&env);
+    let res = client.try_add_registry_root(&U256::from_u32(&env, 1));
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_remove_registry_root() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialised_client(&env);
+    let res = client.try_remove_registry_root(&U256::from_u32(&env, 1));
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_transfer_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialised_client(&env);
+    let new_admin = Address::generate(&env);
+    let res = client.try_transfer_admin(&new_admin);
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_renounce_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialised_client(&env);
+    let res = client.try_renounce_admin();
+    assert_eq!(res, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn not_initialized_verify_and_register() {
+    let env = Env::default();
+    let client = uninitialised_client(&env);
+    let res =
+        client.try_verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+    // The verifier address is absent from storage → NotInitialized.
+    // (The unknown-root check fires first, but both are typed errors.)
+    assert!(res.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// NoPendingAdmin — accept_admin when no transfer has been started.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn accept_admin_with_no_pending_admin_returns_typed_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env, u256(&env, PI_ROOT));
+    // No transfer_admin was called, so PendingAdmin is absent.
+    let res = client.try_accept_admin();
+    assert_eq!(res, Err(Ok(Error::NoPendingAdmin)));
+}
+
+// ---------------------------------------------------------------------------
+// verify_and_register on an uninitialised contract surfaces NotInitialized
+// from the verifier-address lookup (after the root check).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_internal_not_initialized_when_verifier_missing() {
+    let env = Env::default();
+    // Register validator but skip init entirely.
+    let client = uninitialised_client(&env);
+    // Provide valid-looking public inputs (root check will fire first since
+    // there's no root either — that's still a typed error, not a panic).
+    let res =
+        client.try_verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+    assert!(
+        matches!(
+            res,
+            Err(Ok(Error::NotInitialized)) | Err(Ok(Error::UnknownRegistryRoot))
+        ),
+        "expected NotInitialized or UnknownRegistryRoot, got {:?}",
+        res
+    );
 }

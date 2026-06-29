@@ -22,7 +22,7 @@
 //!   [0] registryRoot   [1] nullifierHash   [2] agentId   [3] spendCap
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env,
     Symbol, Vec, U256,
 };
 
@@ -58,18 +58,28 @@ const TTL_THRESHOLD: u32 = 17_280;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Error {
+    /// Contract has not been initialised yet; call `init` first.
     NotInitialized = 1,
+    /// `init` was already called; it may only be called once.
     AlreadyInitialized = 2,
     /// Wrong number of public inputs for the agent_passport circuit.
+    /// Expected exactly 4: [registryRoot, nullifierHash, agentId, spendCap].
     BadPublicInputs = 3,
     /// This nullifier was already spent — replay / Sybil attempt.
+    /// The nullifier is stored permanently in persistent storage after first use.
     NullifierUsed = 4,
-    /// The Groth16 proof did not verify against the embedded key.
+    /// The Groth16 proof did not verify against the embedded verification key.
+    /// Either the proof is malformed, the inputs were tampered with, or the
+    /// wrong verifier contract is configured.
     InvalidProof = 5,
-    /// Batch size exceeds the limit of 8.
+    /// Batch size exceeds the hard limit of 8 proofs per call.
     BatchTooLarge = 6,
-    /// The registry root is not in the approved allow-list.
+    /// The registry root supplied in public_inputs[0] is not in the
+    /// admin-maintained allow-list. The holder's identity provider is not
+    /// currently attested.
     UnknownRegistryRoot = 7,
+    /// No pending admin has been proposed via `transfer_admin`.
+    NoPendingAdmin = 8,
 }
 
 #[contracttype]
@@ -167,11 +177,11 @@ pub struct AgentPassportValidator;
 #[contractimpl]
 impl AgentPassportValidator {
     /// One-time wiring: who can re-point the verifier, and the verifier's
-    /// contract address. Panics on a second call.
-    pub fn init(env: Env, admin: Address, verifier: Address, initial_root: U256) {
+    /// contract address. Returns [`Error::AlreadyInitialized`] on a second call.
+    pub fn init(env: Env, admin: Address, verifier: Address, initial_root: U256) -> Result<(), Error> {
         let storage = env.storage().instance();
         if storage.has(&DataKey::Initialized) {
-            panic_with_error!(&env, Error::AlreadyInitialized);
+            return Err(Error::AlreadyInitialized);
         }
         storage.set(&DataKey::Initialized, &true);
         storage.set(&DataKey::Admin, &admin);
@@ -189,6 +199,7 @@ impl AgentPassportValidator {
                 new: admin,
             },
         );
+        Ok(())
     }
 
     /// Internal logic for verifying a single passport proof.
@@ -453,7 +464,7 @@ impl AgentPassportValidator {
             .storage()
             .instance()
             .get(&DataKey::PendingAdmin)
-            .ok_or(Error::NotInitialized)?;
+            .ok_or(Error::NoPendingAdmin)?;
         pending_admin.require_auth();
 
         let old_admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
