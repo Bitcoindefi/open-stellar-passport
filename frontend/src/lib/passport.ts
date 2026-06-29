@@ -201,6 +201,7 @@ export async function verifyOnChain(p: SorobanProof): Promise<OnChainResult> {
         nullifier: bigint;
         registry_root: bigint;
         spend_cap: bigint;
+        remaining_cap: bigint;
         ledger: number;
       };
       unwrapErr: () => { message?: string };
