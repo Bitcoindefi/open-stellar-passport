@@ -8,7 +8,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    Bytes, BytesN, Env, U256,
+    Bytes, BytesN, Env, IntoVal, Val, U256,
 };
 
 // Real proof bytes (G1 = x||y, G2 = x.c1||x.c0||y.c1||y.c0) from build/arg_proof.json.
@@ -106,6 +106,32 @@ fn registers_a_valid_passport() {
 
     let stored = client.get_passport(&agent_id).unwrap();
     assert_eq!(stored.nullifier, u256(&env, PI_NULLIFIER));
+}
+
+#[test]
+fn passport_registered_event_exposes_nullifier_for_audit_indexers() {
+    let env = Env::default();
+    let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+
+    let expected: Vec<(Address, Vec<Val>, Val)> = Vec::from_array(
+        &env,
+        [(
+            validator_addr.clone(),
+            (Symbol::new(&env, "PassportRegistered"),).into_val(&env),
+            PassportRegistered {
+                agent_id: u256(&env, PI_AGENT),
+                nullifier: u256(&env, PI_NULLIFIER),
+                spend_cap: u256(&env, PI_CAP),
+            }
+            .into_val(&env),
+        )],
+    );
+    assert_eq!(
+        env.events().all().filter_by_contract(&validator_addr),
+        expected
+    );
 }
 
 #[test]
@@ -305,6 +331,38 @@ fn can_manage_registry_roots() {
     // Admin removes the root.
     client.remove_registry_root(&real_root);
     assert!(!client.is_registry_root_approved(&real_root));
+}
+
+#[test]
+fn lists_current_registry_roots_for_auditors() {
+    let env = Env::default();
+    let initial_root = u256(&env, PI_ROOT);
+    let client = setup(&env, initial_root.clone());
+    let second_root = initial_root.add(&U256::from_u32(&env, 7));
+
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone()])
+    );
+
+    env.mock_all_auths();
+    client.add_registry_root(&second_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone(), second_root.clone()])
+    );
+
+    client.add_registry_root(&second_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [initial_root.clone(), second_root.clone()])
+    );
+
+    client.remove_registry_root(&initial_root);
+    assert_eq!(
+        client.list_registry_roots(),
+        Vec::from_array(&env, [second_root])
+    );
 }
 
 #[test]

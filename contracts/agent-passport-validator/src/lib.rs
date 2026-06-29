@@ -13,12 +13,17 @@
 //!   3. records a "zk-passport" attestation for the agent that an x402 settle
 //!      gate (or any caller) can later read with `get_passport` / `is_registered`.
 //!
+//! Auditors can enumerate the small registry-root allow-list with
+//! `list_registry_roots`. Spent nullifiers remain event-sourced from
+//! `PassportRegistered` events to avoid an unbounded on-chain list, while
+//! `is_nullifier_used` provides point-in-time cross-checks.
+//!
 //! Public-input layout (must match the circuit's `main {public [...]}`):
 //!   [0] registryRoot   [1] nullifierHash   [2] agentId   [3] spendCap
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    BytesN, Env, Symbol, U256, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    Symbol, Vec, U256,
 };
 
 /// Generates a typed client for the already-deployed verifier straight from its
@@ -150,6 +155,8 @@ enum DataKey {
     Passport(U256),
     /// Approved Merkle root of the identity registry.
     RegistryRoot(U256),
+    /// Small enumerated index of approved registry roots for audit reads.
+    RegistryRoots,
     AuditEntry(u64),
     AuditSequence,
 }
@@ -169,7 +176,11 @@ impl AgentPassportValidator {
         storage.set(&DataKey::Initialized, &true);
         storage.set(&DataKey::Admin, &admin);
         storage.set(&DataKey::Verifier, &verifier);
-        storage.set(&DataKey::RegistryRoot(initial_root), &true);
+        storage.set(&DataKey::RegistryRoot(initial_root.clone()), &true);
+        storage.set(
+            &DataKey::RegistryRoots,
+            &Vec::from_array(&env, [initial_root]),
+        );
 
         env.events().publish(
             (Symbol::new(&env, "AdminChanged"),),
@@ -282,7 +293,10 @@ impl AgentPassportValidator {
 
         let mut results = Vec::new(&env);
         for input in proofs.iter() {
-            let root = input.public_inputs.get(0).unwrap_or(U256::from_u32(&env, 0));
+            let root = input
+                .public_inputs
+                .get(0)
+                .unwrap_or(U256::from_u32(&env, 0));
             match Self::verify_internal(&env, &input.proof, &input.public_inputs) {
                 Ok(_) => {
                     results.push_back(VerifyResult {
@@ -354,10 +368,7 @@ impl AgentPassportValidator {
 
         env.events().publish(
             (Symbol::new(&env, "VerifierChanged"),),
-            VerifierChanged {
-                old,
-                new: verifier,
-            },
+            VerifierChanged { old, new: verifier },
         );
 
         extend_instance_ttl(&env);
@@ -372,9 +383,18 @@ impl AgentPassportValidator {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::RegistryRoot(root), &true);
+        let instance = env.storage().instance();
+        let root_key = DataKey::RegistryRoot(root.clone());
+        if !instance.has(&root_key) {
+            instance.set(&root_key, &true);
+
+            let mut roots: Vec<U256> = instance
+                .get(&DataKey::RegistryRoots)
+                .unwrap_or(Vec::new(&env));
+            roots.push_back(root);
+            instance.set(&DataKey::RegistryRoots, &roots);
+        }
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -386,9 +406,20 @@ impl AgentPassportValidator {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .remove(&DataKey::RegistryRoot(root));
+        let instance = env.storage().instance();
+        instance.remove(&DataKey::RegistryRoot(root.clone()));
+
+        let roots: Vec<U256> = instance
+            .get(&DataKey::RegistryRoots)
+            .unwrap_or(Vec::new(&env));
+        let mut filtered = Vec::new(&env);
+        for approved_root in roots.iter() {
+            if approved_root != root {
+                filtered.push_back(approved_root);
+            }
+        }
+        instance.set(&DataKey::RegistryRoots, &filtered);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -466,6 +497,14 @@ impl AgentPassportValidator {
     /// True iff `root` is in the approved allow-list.
     pub fn is_registry_root_approved(env: Env, root: U256) -> bool {
         env.storage().instance().has(&DataKey::RegistryRoot(root))
+    }
+
+    /// List currently approved registry roots for auditors and indexers.
+    pub fn list_registry_roots(env: Env) -> Vec<U256> {
+        env.storage()
+            .instance()
+            .get(&DataKey::RegistryRoots)
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Explicitly bump the TTL of the contract instance.
@@ -564,7 +603,10 @@ impl AgentPassportValidator {
     }
 
     pub fn audit_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::AuditSequence).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::AuditSequence)
+            .unwrap_or(0)
     }
 }
 
