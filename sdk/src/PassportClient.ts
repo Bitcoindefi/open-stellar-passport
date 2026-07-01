@@ -11,6 +11,7 @@ export enum PassportError {
   InvalidProof = "InvalidProof",
   BatchTooLarge = "BatchTooLarge",
   UnknownRegistryRoot = "UnknownRegistryRoot",
+  RateLimitExceeded = "RateLimitExceeded",
   Unknown = "Unknown",
 }
 
@@ -49,6 +50,8 @@ const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
       return PassportError.BatchTooLarge;
     case "UnknownRegistryRoot":
       return PassportError.UnknownRegistryRoot;
+    case "RateLimitExceeded":
+      return PassportError.RateLimitExceeded;
     default:
       return PassportError.Unknown;
   }
@@ -152,4 +155,3 @@ export class PassportClient {
     return false;
   }
 }
-
