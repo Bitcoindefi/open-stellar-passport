@@ -626,3 +626,106 @@ mod rate_limit_tests {
         assert!(result_a.is_err());
     }
 }
+
+// Add to existing test.rs:
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+    use soroban_sdk::testutils::Ledger as _;
+
+    #[test]
+    fn rate_limit_allows_10_then_rejects_11th() {
+        let env = Env::default();
+        let (_, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+        let caller = Address::generate(&env);
+        let proof = real_proof(&env);
+        let inputs = real_public_inputs(&env);
+
+        // First 10 calls succeed
+        for i in 0..10 {
+            env.ledger().set_sequence(100 + i as u32);
+            let result = client.try_verify_and_register(&caller, &proof, &inputs);
+            assert!(result.is_ok(), "call {} should succeed", i + 1);
+        }
+
+        // 11th call in same window fails
+        env.ledger().set_sequence(109);
+        let result = client.try_verify_and_register(&caller, &proof, &inputs);
+        assert!(result.is_err());
+        let err: Error = result.unwrap_err().unwrap();
+        assert_eq!(err, Error::RateLimitExceeded);
+    }
+
+    #[test]
+    fn rate_limit_resets_after_window() {
+        let env = Env::default();
+        let (_, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+        let caller = Address::generate(&env);
+        let proof = real_proof(&env);
+        let inputs = real_public_inputs(&env);
+
+        // Exhaust limit
+        for i in 0..10 {
+            env.ledger().set_sequence(100 + i as u32);
+            client.verify_and_register(&caller, &proof, &inputs);
+        }
+
+        // Move past window
+        env.ledger().set_sequence(110);
+        let result = client.try_verify_and_register(&caller, &proof, &inputs);
+        assert!(result.is_ok(), "should reset after window passes");
+    }
+
+    #[test]
+    fn rate_limit_admin_can_adjust() {
+        let env = Env::default();
+        let (_, admin, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+        client.set_rate_limit(&5);
+        let config = client.get_rate_limit();
+        assert_eq!(config.max_calls, 5);
+
+        let caller = Address::generate(&env);
+        let proof = real_proof(&env);
+        let inputs = real_public_inputs(&env);
+
+        for i in 0..5 {
+            env.ledger().set_sequence(200 + i as u32);
+            client.verify_and_register(&caller, &proof, &inputs);
+        }
+
+        env.ledger().set_sequence(204);
+        let result = client.try_verify_and_register(&caller, &proof, &inputs);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().unwrap(), Error::RateLimitExceeded);
+    }
+
+    #[test]
+    fn rate_limit_tracks_per_caller_independently() {
+        let env = Env::default();
+        let (_, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+        let caller_a = Address::generate(&env);
+        let caller_b = Address::generate(&env);
+        let proof = real_proof(&env);
+        let inputs = real_public_inputs(&env);
+
+        // Exhaust A
+        for i in 0..10 {
+            env.ledger().set_sequence(300 + i as u32);
+            client.verify_and_register(&caller_a, &proof, &inputs);
+        }
+
+        // B should still work
+        env.ledger().set_sequence(309);
+        let result = client.try_verify_and_register(&caller_b, &proof, &inputs);
+        assert!(result.is_ok(), "caller B should not be rate limited");
+
+        // A should be blocked
+        let result_a = client.try_verify_and_register(&caller_a, &proof, &inputs);
+        assert!(result_a.is_err());
+    }
+}
