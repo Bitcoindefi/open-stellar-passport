@@ -70,6 +70,8 @@ pub enum Error {
     UnknownRegistryRoot = 6,
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 7,
+    /// An agent passport already exists for this agent ID.
+    AlreadyRegistered = 8,
 }
 
 #[contracttype]
@@ -224,6 +226,12 @@ impl AgentPassportValidator {
             return Err(Error::NullifierUsed);
         }
 
+        // (1.5) reject duplicate agent registration — prevent silent overwrites.
+        let pass_key = DataKey::Passport(agent_id.clone());
+        if persistent.has(&pass_key) {
+            return Err(Error::AlreadyRegistered);
+        }
+
         // (2) cross-contract soundness check. `try_verify` so an invalid proof
         // surfaces as our typed error instead of trapping the whole tx.
         let verifier_addr: Address = env
@@ -312,6 +320,7 @@ impl AgentPassportValidator {
                         Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
                         Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
                         Error::UnknownRegistryRoot => Some(Symbol::new(&env, "UnknownRegistryRoot")),
+                        Error::AlreadyRegistered => Some(Symbol::new(&env, "AlreadyRegistered")),
                         _ => Some(Symbol::new(&env, "Error")),
                     };
                     results.push_back(VerifyResult {

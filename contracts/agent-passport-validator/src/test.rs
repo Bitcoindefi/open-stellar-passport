@@ -182,10 +182,11 @@ fn mixed_batch_results() {
         public_inputs: real_public_inputs(&env),
     });
 
-    // 2. Invalid proof (tampered public input, but unique nullifier)
+    // 2. Invalid proof (tampered public input, unique agent ID and nullifier)
     let mut tampered_pi = real_public_inputs(&env);
     tampered_pi.set(IDX_SPEND_CAP, U256::from_u32(&env, 999));
     tampered_pi.set(IDX_NULLIFIER, U256::from_u32(&env, 9999));
+    tampered_pi.set(IDX_AGENT_ID, U256::from_u32(&env, 8888));
     inputs.push_back(VerifyInput {
         proof: real_proof(&env),
         public_inputs: tampered_pi,
@@ -256,6 +257,34 @@ fn rejects_nullifier_replay() {
     // Same proof again -> nullifier already spent.
     let res = client.try_verify_and_register(&real_proof(&env), &real_public_inputs(&env));
     assert_eq!(res, Err(Ok(Error::NullifierUsed)));
+}
+
+#[test]
+fn rejects_duplicate_agent_registration() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    // First registration succeeds.
+    let att = client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+    let agent_id = u256(&env, PI_AGENT);
+    assert_eq!(att.agent_id, agent_id);
+    assert!(client.is_registered(&agent_id));
+
+    // Second registration with the same agentId but different nullifier should fail.
+    // We can't generate a valid proof with different nullifier from fixtures, so we
+    // test that the duplicate agent guard triggers before proof verification.
+    let mut second_inputs = real_public_inputs(&env);
+    second_inputs.set(IDX_NULLIFIER, U256::from_u32(&env, 99999));
+
+    let res = client.try_verify_and_register(&real_proof(&env), &second_inputs);
+    // The duplicate agent check happens before proof verification, so we get
+    // AlreadyRegistered instead of InvalidProof.
+    assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+
+    // Verify the original passport remains unchanged.
+    let stored = client.get_passport(&agent_id).unwrap();
+    assert_eq!(stored.nullifier, u256(&env, PI_NULLIFIER));
+    assert_eq!(stored.spend_cap, u256(&env, PI_CAP));
 }
 
 #[test]
