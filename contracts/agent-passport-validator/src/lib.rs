@@ -319,7 +319,9 @@ impl AgentPassportValidator {
                         Error::NullifierUsed => Some(Symbol::new(&env, "NullifierUsed")),
                         Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
                         Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
-                        Error::UnknownRegistryRoot => Some(Symbol::new(&env, "UnknownRegistryRoot")),
+                        Error::UnknownRegistryRoot => {
+                            Some(Symbol::new(&env, "UnknownRegistryRoot"))
+                        }
                         Error::AlreadyRegistered => Some(Symbol::new(&env, "AlreadyRegistered")),
                         _ => Some(Symbol::new(&env, "Error")),
                     };
