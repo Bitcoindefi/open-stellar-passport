@@ -48,6 +48,8 @@ const N_PUBLIC_INPUTS: u32 = 4;
 const IDX_NULLIFIER: u32 = 1;
 const IDX_AGENT_ID: u32 = 2;
 const IDX_SPEND_CAP: u32 = 3;
+const MAX_VERIFICATIONS_PER_LEDGER: u32 = 5;
+const VERIFY_COUNT_TTL_LEDGERS: u32 = 1;
 
 /// ~30 days of ledgers (5s close time) — keep attestations & spent nullifiers
 /// alive well past a typical agent session without unbounded rent.
@@ -70,8 +72,12 @@ pub enum Error {
     UnknownRegistryRoot = 6,
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 7,
+ feat/credential-revocation
     /// The credential root has been revoked.
     CredentialRevoked = 9,
+    /// This wallet exceeded the per-ledger credential verification limit.
+    RateLimitExceeded = 8,
+ main
 }
 
 #[contracttype]
@@ -107,6 +113,12 @@ pub struct PassportRegistered {
     pub agent_id: U256,
     pub nullifier: U256,
     pub spend_cap: U256,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RateLimited {
+    pub wallet: Address,
 }
 
 #[contracttype]
@@ -168,8 +180,11 @@ enum DataKey {
     RegistryRoots,
     AuditEntry(u64),
     AuditSequence,
+ feat/credential-revocation
     /// Revoked credential Merkle root -> revoked (presence == revoked).
     RevokedRoot(BytesN<32>),
+    VerifyCount(Address, u32),
+ main
 }
 
 #[contract]
@@ -325,7 +340,9 @@ impl AgentPassportValidator {
                         Error::UnknownRegistryRoot => {
                             Some(Symbol::new(&env, "UnknownRegistryRoot"))
                         }
+ feat/credential-revocation
                         Error::CredentialRevoked => Some(Symbol::new(&env, "CredentialRevoked")),
+ main
                         _ => Some(Symbol::new(&env, "Error")),
                     };
                     results.push_back(VerifyResult {
@@ -567,6 +584,29 @@ impl AgentPassportValidator {
 
         actor.require_auth();
 
+ feat/credential-revocation
+        let ledger_sequence = env.ledger().sequence();
+        let count_key = DataKey::VerifyCount(actor.clone(), ledger_sequence);
+        let temporary = env.storage().temporary();
+        let verify_count: u32 = temporary.get(&count_key).unwrap_or(0);
+        if verify_count >= MAX_VERIFICATIONS_PER_LEDGER {
+            env.events().publish(
+                (Symbol::new(&env, "rate_limited"),),
+                RateLimited {
+                    wallet: actor.clone(),
+                },
+            );
+            return Err(Error::RateLimitExceeded);
+        }
+        temporary.set(&count_key, &(verify_count + 1));
+        temporary.extend_ttl(
+            &count_key,
+            VERIFY_COUNT_TTL_LEDGERS,
+            VERIFY_COUNT_TTL_LEDGERS,
+        );
+
+        let instance = env.storage().instance();
+ main
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
 
         let action = if success {
@@ -579,7 +619,7 @@ impl AgentPassportValidator {
             action,
             actor: actor.clone(),
             root,
-            ledger: env.ledger().sequence(),
+            ledger: ledger_sequence,
             success,
         };
 

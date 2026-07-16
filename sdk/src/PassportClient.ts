@@ -11,7 +11,10 @@ export enum PassportError {
   InvalidProof = "InvalidProof",
   BatchTooLarge = "BatchTooLarge",
   UnknownRegistryRoot = "UnknownRegistryRoot",
+ feat/credential-revocation
   CredentialRevoked = "CredentialRevoked",
+  RateLimitExceeded = "RateLimitExceeded",
+ main
   Unknown = "Unknown",
 }
 
@@ -50,8 +53,11 @@ const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
       return PassportError.BatchTooLarge;
     case "UnknownRegistryRoot":
       return PassportError.UnknownRegistryRoot;
+ feat/credential-revocation
     case "CredentialRevoked":
       return PassportError.CredentialRevoked;
+    case "RateLimitExceeded":
+      return PassportError.RateLimitExceeded; main
     default:
       return PassportError.Unknown;
   }
@@ -155,4 +161,3 @@ export class PassportClient {
     return false;
   }
 }
-

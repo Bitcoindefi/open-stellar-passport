@@ -512,6 +512,7 @@ fn test_audit_logging() {
     assert_eq!(entry3.success, true);
 }
 
+ feat/credential-revocation
 // ---------------------------------------------------------------------------
 // Credential revocation tests
 // ---------------------------------------------------------------------------
@@ -649,4 +650,44 @@ fn different_roots_are_independent_for_revocation() {
 
     assert!(client.is_revoked(&root_a));
     assert!(!client.is_revoked(&root_b));
+#[test]
+fn rate_limits_verification_per_wallet_and_ledger() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(1000);
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[0u8; 32]);
+
+    env.mock_all_auths();
+    for _ in 0..5 {
+        assert!(client.verify_credential(&actor, &root, &true));
+    }
+
+    let sixth = client.try_verify_credential(&actor, &root, &true);
+    assert_eq!(sixth, Err(Ok(Error::RateLimitExceeded)));
+    assert_eq!(client.audit_count(), 5);
+
+    env.ledger().set_sequence_number(1001);
+    assert!(client.verify_credential(&actor, &root, &true));
+    assert_eq!(client.audit_count(), 6);
+}
+
+#[test]
+fn verification_rate_limit_is_isolated_by_wallet() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(1000);
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let first_actor = Address::generate(&env);
+    let second_actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[0u8; 32]);
+
+    env.mock_all_auths();
+    for _ in 0..5 {
+        assert!(client.verify_credential(&first_actor, &root, &true));
+    }
+
+    assert!(client.verify_credential(&second_actor, &root, &true));
+ main
 }
