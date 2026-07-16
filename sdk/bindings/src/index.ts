@@ -58,7 +58,7 @@ export const Errors = {
   /**
    * The credential root has been revoked.
    */
-  8: {message:"CredentialRevoked"}
+  9: {message:"CredentialRevoked"}
 }
 
 

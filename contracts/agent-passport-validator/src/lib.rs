@@ -71,7 +71,7 @@ pub enum Error {
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 7,
     /// The credential root has been revoked.
-    CredentialRevoked = 8,
+    CredentialRevoked = 9,
 }
 
 #[contracttype]
@@ -558,13 +558,14 @@ impl AgentPassportValidator {
         root: BytesN<32>,
         success: bool,
     ) -> Result<bool, Error> {
-        actor.require_auth();
-
-        // Check if the credential root has been revoked.
+        // Check if the credential root has been revoked first,
+        // so revoked roots don't consume caller quota/rate-limit budget.
         let instance = env.storage().instance();
         if instance.has(&DataKey::RevokedRoot(root.clone())) {
             return Err(Error::CredentialRevoked);
         }
+
+        actor.require_auth();
 
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
 
