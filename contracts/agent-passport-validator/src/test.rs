@@ -124,6 +124,7 @@ fn passport_registered_event_exposes_nullifier_for_audit_indexers() {
                 agent_id: u256(&env, PI_AGENT),
                 nullifier: u256(&env, PI_NULLIFIER),
                 spend_cap: u256(&env, PI_CAP),
+                remaining_cap: u256(&env, PI_CAP),
             }
             .into_val(&env),
         )],
@@ -510,4 +511,46 @@ fn test_audit_logging() {
     assert_eq!(entry3.actor, actor);
     assert_eq!(entry3.root, root);
     assert_eq!(entry3.success, true);
+}
+
+#[test]
+fn authorize_spend_decrements_cap() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+    let agent_id = u256(&env, PI_AGENT);
+
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+
+    let spend_amount = U256::from_u32(&env, 1000);
+    client.authorize_spend(&agent_id, &spend_amount);
+
+    let att = client.get_passport(&agent_id).unwrap();
+    let initial_cap = u256(&env, PI_CAP);
+    assert_eq!(att.remaining_cap, initial_cap.checked_sub(&spend_amount).unwrap());
+
+}
+
+#[test]
+fn rejects_overspend() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+    let agent_id = u256(&env, PI_AGENT);
+
+    client.verify_and_register(&real_proof(&env), &real_public_inputs(&env));
+
+    let initial_cap = u256(&env, PI_CAP);
+    let overspend = initial_cap.add(&U256::from_u32(&env, 1));
+
+    let res = client.try_authorize_spend(&agent_id, &overspend);
+    assert_eq!(res, Err(Ok(Error::InsufficientSpendCap)));
+}
+
+#[test]
+fn rejects_spend_for_unregistered_agent() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+    let agent_id = u256(&env, PI_AGENT);
+
+    let res = client.try_authorize_spend(&agent_id, &U256::from_u32(&env, 1));
+    assert_eq!(res, Err(Ok(Error::PassportNotFound)));
 }

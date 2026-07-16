@@ -24,18 +24,20 @@ describe("parseContractError", () => {
 
 describe("evaluatePaymentAuthorization", () => {
   it("authorizes an amount equal to the proven spend cap", () => {
-    expect(evaluatePaymentAuthorization({ spend_cap: "500" }, "500")).toEqual({
+    expect(evaluatePaymentAuthorization({ spend_cap: "500", remaining_cap: "500" }, "500")).toEqual({
       authorized: true,
       cap: "500",
+      remaining: "500",
       reason: "Within proven spend cap",
     });
   });
 
-  it("rejects amounts above the proven spend cap", () => {
-    expect(evaluatePaymentAuthorization({ spend_cap: "500" }, "501")).toEqual({
+  it("rejects amounts above the remaining spend cap", () => {
+    expect(evaluatePaymentAuthorization({ spend_cap: "500", remaining_cap: "250" }, "251")).toEqual({
       authorized: false,
       cap: "500",
-      reason: "Exceeds proven spend cap",
+      remaining: "250",
+      reason: "Exceeds remaining spend cap",
     });
   });
 
@@ -50,10 +52,11 @@ describe("evaluatePaymentAuthorization", () => {
     "rejects invalid payment amount %s",
     (amount) => {
       expect(
-        evaluatePaymentAuthorization({ spend_cap: "500" }, amount),
+        evaluatePaymentAuthorization({ spend_cap: "500", remaining_cap: "500" }, amount),
       ).toEqual({
         authorized: false,
         cap: "500",
+        remaining: "500",
         reason: "Invalid payment amount",
       });
     },

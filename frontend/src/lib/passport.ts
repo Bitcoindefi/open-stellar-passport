@@ -49,6 +49,7 @@ export interface OnChainResult {
     nullifier: string;
     registry_root: string;
     spend_cap: string;
+    remaining_cap: string;
     ledger: number;
   };
   error?: string;
@@ -200,6 +201,7 @@ export async function verifyOnChain(p: SorobanProof): Promise<OnChainResult> {
         nullifier: bigint;
         registry_root: bigint;
         spend_cap: bigint;
+        remaining_cap: bigint;
         ledger: number;
       };
       unwrapErr: () => { message?: string };
@@ -214,6 +216,7 @@ export async function verifyOnChain(p: SorobanProof): Promise<OnChainResult> {
           nullifier: String(a.nullifier),
           registry_root: String(a.registry_root),
           spend_cap: String(a.spend_cap),
+          remaining_cap: String(a.remaining_cap),
           ledger: Number(a.ledger),
         },
       };
@@ -269,16 +272,17 @@ export async function getPassport(
     nullifier: String(a.nullifier),
     registry_root: String(a.registry_root),
     spend_cap: String(a.spend_cap),
+    remaining_cap: String(a.remaining_cap),
     ledger: Number(a.ledger),
   };
 }
 
 export function evaluatePaymentAuthorization(
   passport:
-    | Pick<NonNullable<OnChainResult["attestation"]>, "spend_cap">
+    | Pick<NonNullable<OnChainResult["attestation"]>, "spend_cap" | "remaining_cap">
     | undefined,
   amount: string,
-): { authorized: boolean; reason: string; cap?: string } {
+): { authorized: boolean; reason: string; cap?: string; remaining?: string } {
   if (!passport)
     return { authorized: false, reason: "No passport — agent not verified" };
 
@@ -286,15 +290,18 @@ export function evaluatePaymentAuthorization(
     return {
       authorized: false,
       cap: passport.spend_cap,
+      remaining: passport.remaining_cap,
       reason: "Invalid payment amount",
     };
   }
 
-  const ok = BigInt(passport.spend_cap) >= BigInt(amount);
+  const limit = BigInt(passport.remaining_cap ?? passport.spend_cap);
+  const ok = limit >= BigInt(amount);
   return {
     authorized: ok,
     cap: passport.spend_cap,
-    reason: ok ? "Within proven spend cap" : "Exceeds proven spend cap",
+    remaining: passport.remaining_cap,
+    reason: ok ? "Within proven spend cap" : "Exceeds remaining spend cap",
   };
 }
 
@@ -305,7 +312,7 @@ export function evaluatePaymentAuthorization(
 export async function authorizePayment(
   agentId: string,
   amount: string,
-): Promise<{ authorized: boolean; reason: string; cap?: string }> {
+): Promise<{ authorized: boolean; reason: string; cap?: string; remaining?: string }> {
   const passport = await getPassport(agentId);
   return evaluatePaymentAuthorization(passport, amount);
 }

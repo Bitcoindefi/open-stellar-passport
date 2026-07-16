@@ -29,10 +29,13 @@ Not a mock — a real ZK proof was verified and an attestation **minted on-chain
 
 What the chain enforces — tested end-to-end:
 
-- ✅ **Valid proof** → `verify_and_register` **Success**: attestation minted for agent `#42` at ledger `3,146,304`, `passport` event emitted with the nullifier + spend cap.
+- ✅ **Valid proof** → `verify_and_register` **Success**: attestation minted for agent `#42` at ledger `3,146,304`, `PassportRegistered` event emitted with the nullifier + spend cap.
 - 🔁 **Replay the same proof** → `Error(Contract, #4)` = **`NullifierUsed`** (stateful anti-replay / anti-Sybil).
 - ✋ **Tamper a public input** → `Error(Contract, #5)` = **`InvalidProof`** (the BN254 pairing check rejects it — soundness).
-- ❌ **Proof against unknown root** → `Error(Contract, #6)` = **`UnknownRegistryRoot`** (only approved roots allowed).
+- ❌ **Proof against unknown root** → `Error(Contract, #7)` = **`UnknownRegistryRoot`** (only approved roots allowed).
+- 💰 **Spend Gate** → `authorize_spend(agent_id, amount)`:
+    - ✅ **Cumulative spend ≤ proven cap** → **Success**: decrements `remaining_cap`, `SpendAuthorized` event emitted.
+    - ❌ **Spend > remaining cap** → `Error(Contract, #8)` = **`InsufficientSpendCap`** (on-chain enforcement).
 - 🔒 Only **4 public inputs** ever reach the chain (`registryRoot`, `nullifierHash`, `agentId`, `spendCap`). The owner key, balance and Merkle path never leave the browser.
 
 **Reproduce it yourself** against the live contract:
@@ -73,8 +76,11 @@ A compromised agent can't exceed its proven cap. The owner's identity and real b
 Human → mints agent in trionlabs/stellar-8004 Identity Registry (agent_id)
       → owner generates Groth16 proof CLIENT-SIDE (snarkjs/WASM, secrets never leave)
       → AgentPassportValidator (Soroban) verifies proof on BN254, burns the nullifier
-      → writes a "zk-passport" attestation (validator store today; 8004 Validation Registry is the target)
-At payment time (x402): settle only if agent has a valid passport AND amount ≤ proven cap.
+      → writes a "zk-passport" attestation with the `spend_cap`
+At payment time (x402):
+      → paid-API facilitator calls `authorize_spend(agent_id, amount)` on-chain
+      → validator checks `amount ≤ remaining_cap` and decrements it
+      → settle only if `authorize_spend` succeeds.
 ```
 
 We reuse:

@@ -67,7 +67,11 @@ pub enum Error {
     /// The Groth16 proof did not verify against the embedded key.
     InvalidProof = 5,
     /// The registry root is not in the approved allow-list.
-    UnknownRegistryRoot = 6,
+    UnknownRegistryRoot = 7,
+    /// The requested spend exceeds the remaining cumulative cap.
+    InsufficientSpendCap = 8,
+    /// No passport found for the given agent.
+    PassportNotFound = 9,
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 7,
 }
@@ -105,6 +109,15 @@ pub struct PassportRegistered {
     pub agent_id: U256,
     pub nullifier: U256,
     pub spend_cap: U256,
+    pub remaining_cap: U256,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SpendAuthorized {
+    pub agent_id: U256,
+    pub amount: U256,
+    pub remaining_cap: U256,
 }
 
 #[contracttype]
@@ -124,6 +137,7 @@ pub struct Attestation {
     pub nullifier: U256,
     pub registry_root: U256,
     pub spend_cap: U256,
+    pub remaining_cap: U256,
     /// Ledger sequence at which the passport was minted.
     pub ledger: u32,
 }
@@ -251,6 +265,7 @@ impl AgentPassportValidator {
             nullifier: nullifier.clone(),
             registry_root,
             spend_cap: spend_cap.clone(),
+            remaining_cap: spend_cap.clone(),
             ledger: env.ledger().sequence(),
         };
         let pass_key = DataKey::Passport(agent_id.clone());
@@ -262,7 +277,8 @@ impl AgentPassportValidator {
             PassportRegistered {
                 agent_id,
                 nullifier,
-                spend_cap,
+                spend_cap: spend_cap.clone(),
+                remaining_cap: spend_cap,
             },
         );
 
@@ -333,6 +349,39 @@ impl AgentPassportValidator {
     /// Fetch the stored attestation for an agent, if any.
     pub fn get_passport(env: Env, agent_id: U256) -> Option<Attestation> {
         env.storage().persistent().get(&DataKey::Passport(agent_id))
+    }
+
+    /// Authorize a spend against the agent's remaining cap.
+    ///
+    /// This is the x402 gate: the paid-API facilitator calls this before settling.
+    /// It decrements the per-passport running total and emits an event.
+    pub fn authorize_spend(env: Env, agent_id: U256, amount: U256) -> Result<(), Error> {
+        let persistent = env.storage().persistent();
+        let pass_key = DataKey::Passport(agent_id.clone());
+
+        let mut attestation: Attestation = persistent
+            .get(&pass_key)
+            .ok_or(Error::PassportNotFound)?;
+
+        if amount > attestation.remaining_cap {
+            return Err(Error::InsufficientSpendCap);
+        }
+
+        attestation.remaining_cap = attestation.remaining_cap.checked_sub(&amount).unwrap();
+
+        persistent.set(&pass_key, &attestation);
+        persistent.extend_ttl(&pass_key, TTL_THRESHOLD, TTL_BUMP);
+
+        env.events().publish(
+            (Symbol::new(&env, "SpendAuthorized"),),
+            SpendAuthorized {
+                agent_id,
+                amount,
+                remaining_cap: attestation.remaining_cap,
+            },
+        );
+
+        Ok(())
     }
 
     /// True iff this nullifier has already been spent.

@@ -66,6 +66,7 @@ ledger: u32;
   nullifier: u256;
   registry_root: u256;
   spend_cap: u256;
+  remaining_cap: u256;
 }
 
 
