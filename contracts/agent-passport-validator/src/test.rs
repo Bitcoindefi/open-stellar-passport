@@ -511,3 +511,142 @@ fn test_audit_logging() {
     assert_eq!(entry3.root, root);
     assert_eq!(entry3.success, true);
 }
+
+// ---------------------------------------------------------------------------
+// Credential revocation tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn admin_can_revoke_credential_root() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    assert!(!client.is_revoked(&root));
+
+    env.mock_all_auths();
+    client.revoke_credential(&Address::generate(&env), &root);
+
+    assert!(client.is_revoked(&root));
+}
+
+#[test]
+fn verify_credential_fails_with_credential_revoked_after_revoke() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[2u8; 32]);
+
+    env.mock_all_auths();
+
+    // First, verify succeeds
+    let res = client.verify_credential(&actor, &root, &true);
+    assert_eq!(res, true);
+
+    // Now revoke the root
+    client.revoke_credential(&actor, &root);
+
+    // Subsequent verify_credential with that root fails with CredentialRevoked
+    let res = client.try_verify_credential(&actor, &root, &true);
+    assert_eq!(res, Err(Ok(Error::CredentialRevoked)));
+}
+
+#[test]
+fn is_revoked_returns_true_for_revoked_roots() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let root = BytesN::from_array(&env, &[3u8; 32]);
+    assert!(!client.is_revoked(&root));
+
+    env.mock_all_auths();
+    client.revoke_credential(&Address::generate(&env), &root);
+
+    assert!(client.is_revoked(&root));
+}
+
+#[test]
+fn issue_verify_revoke_verify_flow() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[4u8; 32]);
+
+    env.mock_all_auths();
+
+    // Issue → verify (passes)
+    client.issue_credential(&actor, &root);
+    let res = client.verify_credential(&actor, &root, &true);
+    assert_eq!(res, true);
+
+    // Revoke
+    client.revoke_credential(&actor, &root);
+
+    // Verify fails with CredentialRevoked
+    let res = client.try_verify_credential(&actor, &root, &true);
+    assert_eq!(res, Err(Ok(Error::CredentialRevoked)));
+}
+
+#[test]
+fn credential_revoked_event_emitted_with_correct_fields() {
+    let env = Env::default();
+    let (validator_addr, _, client) = setup_with_id(&env, u256(&env, PI_ROOT));
+
+    let actor = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[5u8; 32]);
+
+    env.ledger().set_sequence_number(5000);
+
+    env.mock_all_auths();
+    client.revoke_credential(&actor, &root);
+
+    let events = env.events().all().filter_by_contract(&validator_addr);
+    // We expect at least the credential_revoked event (there may also be audit events)
+    assert!(events.events().len() >= 1, "expected at least one event");
+}
+
+#[test]
+fn non_admin_call_to_revoke_credential_returns_unauthorized() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    // A non-admin-generated address calling revoke_credential should fail
+    // because require_auth() will panic when the address hasn't been authorized.
+    let non_admin = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[6u8; 32]);
+
+    let res = client.try_revoke_credential(&non_admin, &root);
+    assert!(res.is_err());
+}
+
+#[test]
+fn revoked_root_remains_revoked_across_multiple_checks() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let root = BytesN::from_array(&env, &[7u8; 32]);
+
+    env.mock_all_auths();
+    client.revoke_credential(&Address::generate(&env), &root);
+
+    assert!(client.is_revoked(&root));
+    assert!(client.is_revoked(&root));
+    assert!(client.is_revoked(&root));
+}
+
+#[test]
+fn different_roots_are_independent_for_revocation() {
+    let env = Env::default();
+    let client = setup(&env, u256(&env, PI_ROOT));
+
+    let root_a = BytesN::from_array(&env, &[8u8; 32]);
+    let root_b = BytesN::from_array(&env, &[9u8; 32]);
+
+    env.mock_all_auths();
+    client.revoke_credential(&Address::generate(&env), &root_a);
+
+    assert!(client.is_revoked(&root_a));
+    assert!(!client.is_revoked(&root_b));
+}

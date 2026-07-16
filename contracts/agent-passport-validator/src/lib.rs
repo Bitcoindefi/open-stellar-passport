@@ -70,6 +70,8 @@ pub enum Error {
     UnknownRegistryRoot = 6,
     /// Batch size exceeds the limit of 8.
     BatchTooLarge = 7,
+    /// The credential root has been revoked.
+    CredentialRevoked = 8,
 }
 
 #[contracttype]
@@ -144,6 +146,13 @@ pub struct VerifyResult {
 }
 
 #[contracttype]
+#[derive(Clone, Debug)]
+pub struct CredentialRevokedEvent {
+    pub root: BytesN<32>,
+    pub revoked_at_ledger: u32,
+}
+
+#[contracttype]
 enum DataKey {
     Admin,
     PendingAdmin,
@@ -159,6 +168,8 @@ enum DataKey {
     RegistryRoots,
     AuditEntry(u64),
     AuditSequence,
+    /// Revoked credential Merkle root -> revoked (presence == revoked).
+    RevokedRoot(BytesN<32>),
 }
 
 #[contract]
@@ -311,7 +322,10 @@ impl AgentPassportValidator {
                         Error::NullifierUsed => Some(Symbol::new(&env, "NullifierUsed")),
                         Error::InvalidProof => Some(Symbol::new(&env, "InvalidProof")),
                         Error::NotInitialized => Some(Symbol::new(&env, "NotInitialized")),
-                        Error::UnknownRegistryRoot => Some(Symbol::new(&env, "UnknownRegistryRoot")),
+                        Error::UnknownRegistryRoot => {
+                            Some(Symbol::new(&env, "UnknownRegistryRoot"))
+                        }
+                        Error::CredentialRevoked => Some(Symbol::new(&env, "CredentialRevoked")),
                         _ => Some(Symbol::new(&env, "Error")),
                     };
                     results.push_back(VerifyResult {
@@ -546,7 +560,12 @@ impl AgentPassportValidator {
     ) -> Result<bool, Error> {
         actor.require_auth();
 
+        // Check if the credential root has been revoked.
         let instance = env.storage().instance();
+        if instance.has(&DataKey::RevokedRoot(root.clone())) {
+            return Err(Error::CredentialRevoked);
+        }
+
         let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
 
         let action = if success {
@@ -574,12 +593,34 @@ impl AgentPassportValidator {
         Ok(success)
     }
 
+    /// Admin-only: Mark a credential Merkle root as revoked.
+    /// Once revoked, any verify_credential call with this root will fail
+    /// with CredentialRevoked.
     pub fn revoke_credential(env: Env, actor: Address, root: BytesN<32>) -> Result<(), Error> {
-        actor.require_auth();
+        // Admin-only check.
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
 
         let instance = env.storage().instance();
-        let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
 
+        // Mark the root as revoked.
+        instance.set(&DataKey::RevokedRoot(root.clone()), &true);
+
+        // Emit the credential_revoked event.
+        env.events().publish(
+            (Symbol::new(&env, "credential_revoked"),),
+            CredentialRevokedEvent {
+                root: root.clone(),
+                revoked_at_ledger: env.ledger().sequence(),
+            },
+        );
+
+        // Audit log entry for the revoke action.
+        let seq: u64 = instance.get(&DataKey::AuditSequence).unwrap_or(0);
         let record = AuditRecord {
             action: Symbol::new(&env, "revoke"),
             actor: actor.clone(),
@@ -587,7 +628,6 @@ impl AgentPassportValidator {
             ledger: env.ledger().sequence(),
             success: true,
         };
-
         let persistent = env.storage().persistent();
         let key = DataKey::AuditEntry(seq);
         persistent.set(&key, &record);
@@ -597,6 +637,11 @@ impl AgentPassportValidator {
         extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    /// Public read function: check if a credential root has been revoked.
+    pub fn is_revoked(env: Env, root: BytesN<32>) -> bool {
+        env.storage().instance().has(&DataKey::RevokedRoot(root))
     }
 
     pub fn get_audit_entry(env: Env, seq: u64) -> Option<AuditRecord> {

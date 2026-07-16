@@ -54,7 +54,11 @@ export const Errors = {
    */
   5: {message:"InvalidProof"},
   6: {message:"BatchTooLarge"},
-  7: {message:"UnknownRegistryRoot"}
+  7: {message:"UnknownRegistryRoot"},
+  /**
+   * The credential root has been revoked.
+   */
+  8: {message:"CredentialRevoked"}
 }
 
 

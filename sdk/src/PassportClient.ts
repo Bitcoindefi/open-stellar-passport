@@ -11,6 +11,7 @@ export enum PassportError {
   InvalidProof = "InvalidProof",
   BatchTooLarge = "BatchTooLarge",
   UnknownRegistryRoot = "UnknownRegistryRoot",
+  CredentialRevoked = "CredentialRevoked",
   Unknown = "Unknown",
 }
 
@@ -49,6 +50,8 @@ const mapSymbolToPassportError = (err: unknown): PassportError | undefined => {
       return PassportError.BatchTooLarge;
     case "UnknownRegistryRoot":
       return PassportError.UnknownRegistryRoot;
+    case "CredentialRevoked":
+      return PassportError.CredentialRevoked;
     default:
       return PassportError.Unknown;
   }

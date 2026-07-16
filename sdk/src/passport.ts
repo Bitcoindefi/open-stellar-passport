@@ -209,6 +209,29 @@ function utcWeekStart(ts: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), mon);
 }
 
+/**
+ * Check if an error is a credential revocation error.
+ * Works with PassportError enum values, contract error symbols, and error objects.
+ */
+export function isRevocationError(error: unknown): boolean {
+  if (typeof error === "string") {
+    return error === "CredentialRevoked";
+  }
+  if (error && typeof error === "object") {
+    const obj = error as Record<string, unknown>;
+    if (typeof obj.error === "string") {
+      return obj.error === "CredentialRevoked";
+    }
+    if (typeof obj.message === "string") {
+      return obj.message === "CredentialRevoked";
+    }
+    if (typeof obj.code === "number") {
+      return obj.code === 8;
+    }
+  }
+  return false;
+}
+
 export function authorizePassportSpend(
   agentId: string,
   amount: number,
