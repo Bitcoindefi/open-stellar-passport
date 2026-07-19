@@ -205,7 +205,11 @@ node scripts/smoke.mjs   # ==> PROOF VALID: true
 
 ## License
 
-MIT. Vendored circuit building blocks under `circuits/lib/` are Apache-2.0 (© Nethermind), derived from tornadocash/tornado-nova.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+
+Third-party attributions:
+- Circuit building blocks under `circuits/lib/keypair.circom`, `circuits/lib/merkleProof.circom`, and `circuits/lib/poseidon2/` are adapted from **[NethermindEth/stellar-private-payments](https://github.com/NethermindEth/stellar-private-payments)** (Apache-2.0 © Nethermind), themselves derived from tornadocash/tornado-nova (MIT).
+- `circuits/lib/circomlib/` is vendored from **[iden3/circomlib](https://github.com/iden3/circomlib)** (GPL-3.0 © 0kims association), used at circuit-compile time only. The compiled ZK artefacts are distributed under Apache-2.0.
 
 ## Trust Assumptions
 
