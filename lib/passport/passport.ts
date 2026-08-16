@@ -1,8 +1,7 @@
-// lib/passport/passport.ts
 import { appendAuditEntry } from "./audit"
-import { appendAuditEvent } from "./audit-log"
 
 export type PassportStatus = "active" | "revoked" | "expired" | "suspended"
+
 
 export interface PassportConfig {
   allowTransfer: boolean
@@ -112,69 +111,11 @@ export function issuePassport(
     expiresAt,
   }
   setPassport(record)
-
-  // Legacy passport-level audit
   appendAuditEntry({
     passportId: record.id,
     action: "issued",
     actor,
   })
-
-  // NEW: Per-agent audit
-  appendAuditEvent({
-    agentId: record.agentId,
-    type: "issued",
-  })
-
-  return record
-}
-
-export function authorizePassportSpend(
-  agentId: string,
-  amount: number,
-  quoteId: string,
-  actor: string,
-): { ok: true; record: PassportRecord } | { ok: false; error: string } {
-  const record = getPassportByAgentId(agentId)
-  if (!record) {
-    appendAuditEvent({ agentId, type: "authorized", amount, quoteId, ok: false })
-    return { ok: false, error: "passport_not_found" }
-  }
-  if (record.status !== "active") {
-    appendAuditEvent({ agentId, type: "authorized", amount, quoteId, ok: false })
-    return { ok: false, error: `passport_${record.status}` }
-  }
-
-  appendAuditEvent({ agentId, type: "authorized", amount, quoteId, ok: true })
-  return { ok: true, record }
-}
-
-export function revokePassport(
-  id: string,
-  actor: string,
-  reason?: string,
-): PassportRecord {
-  const record = getPassport(id)
-  if (!record) throw new Error("passport_not_found")
-
-  record.status = "revoked"
-  setPassport(record)
-
-  // Legacy passport-level audit
-  appendAuditEntry({
-    passportId: record.id,
-    action: "revoked",
-    actor,
-    reason,
-  })
-
-  // NEW: Per-agent audit
-  appendAuditEvent({
-    agentId: record.agentId,
-    type: "revoked",
-    reason,
-  })
-
   return record
 }
 
@@ -211,21 +152,12 @@ export function expirePassport(id: string, actor: string, reason?: string): Pass
   if (!record) throw new Error("passport_not_found")
   record.status = "expired"
   setPassport(record)
-
   appendAuditEntry({
     passportId: record.id,
     action: "expired",
     actor,
     reason,
   })
-
-  // NEW: Per-agent audit
-  appendAuditEvent({
-    agentId: record.agentId,
-    type: "expired",
-    reason,
-  })
-
   return record
 }
 
@@ -290,7 +222,7 @@ export interface BatchVerificationResponse {
 }
 
 export function verifyPassportBatch(passportIds: string[]): BatchVerificationResponse {
-  const results: BatchVerificationResult[] = passportIds.map((id) => {
+  const results: BatchVerificationResult[] = passportIds.map(id => {
     const passport = getPassport(id)
     if (!passport) {
       return {
@@ -298,7 +230,7 @@ export function verifyPassportBatch(passportIds: string[]): BatchVerificationRes
         status: null,
         agentId: null,
         valid: false,
-        error: "not_found",
+        error: "not_found"
       }
     }
     const valid = passport.status === "active"
@@ -306,29 +238,18 @@ export function verifyPassportBatch(passportIds: string[]): BatchVerificationRes
       passportId: id,
       status: passport.status,
       agentId: passport.agentId,
-      valid,
+      valid
     }
   })
 
   const total = results.length
-  const validCount = results.filter((r) => r.valid).length
+  const validCount = results.filter(r => r.valid).length
   const invalidCount = total - validCount
-
-  // NEW: Per-agent audit for batch verification
-  results.forEach((r) => {
-    if (r.agentId) {
-      appendAuditEvent({
-        agentId: r.agentId,
-        type: "batch_verified",
-        ok: r.valid,
-      })
-    }
-  })
 
   return {
     results,
     total,
     validCount,
-    invalidCount,
+    invalidCount
   }
 }

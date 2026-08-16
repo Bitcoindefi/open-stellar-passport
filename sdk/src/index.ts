@@ -37,9 +37,3 @@ export {
 
 export { PassportClient } from "./PassportClient.js";
 
-export {
-  hashLeaf,
-  buildCredentialMerkleRoot,
-  type CredentialFields,
-} from "./merkle.js";
-
