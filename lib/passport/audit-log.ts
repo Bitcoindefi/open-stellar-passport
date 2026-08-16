@@ -1,108 +1,95 @@
+// lib/passport/audit-log.ts
 import { randomUUID } from "node:crypto"
+import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 
-export type AdminAuditAction =
-  | "grant"
-  | "revoke"
-  | "batch_verify"
-  | "admin_transfer"
-  | "verifier_change"
+export type PassportAuditEventType =
+  | "issued"
+  | "authorized"
+  | "revoked"
+  | "expired"
+  | "batch_verified"
 
-export interface AdminAuditEntry {
-  id: string                        // crypto.randomUUID()
-  action: AdminAuditAction
-  actor: string                     // admin wallet address
-  target: string                    // passport ID or new admin address
-  timestamp: number                 // Date.now()
-  metadata?: Record<string, unknown>
+export interface PassportAuditEvent {
+  id: string
+  agentId: string
+  type: PassportAuditEventType
+  at: string // ISO-8601
+  amount?: number
+  quoteId?: string
+  reason?: string
+  ok?: boolean
 }
 
-type AdminAuditLog = AdminAuditEntry[]
+const DATA_DIR = join(process.cwd(), ".data")
+const AUDIT_FILE = join(DATA_DIR, "passport-audit.jsonl")
+const MAX_EVENTS = 1000
 
-const globalState = globalThis as typeof globalThis & {
-  __openStellarPassportAdminAuditLog__?: AdminAuditLog
-}
-
-function getAdminAuditLog(): AdminAuditLog {
-  if (!globalState.__openStellarPassportAdminAuditLog__) {
-    globalState.__openStellarPassportAdminAuditLog__ = []
+function ensureDataDir(): void {
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true })
   }
-  return globalState.__openStellarPassportAdminAuditLog__
 }
 
-/**
- * Appends a new admin audit entry. Auto-generates id and timestamp.
- */
-export function appendAdminAuditEntry(
-  entry: Omit<AdminAuditEntry, "id" | "timestamp"> & { id?: string; timestamp?: number }
-): AdminAuditEntry {
-  const newEntry: AdminAuditEntry = {
-    id: entry.id || randomUUID(),
-    action: entry.action,
-    actor: entry.actor,
-    target: entry.target,
-    timestamp: entry.timestamp ?? Date.now(),
-    metadata: entry.metadata,
-  }
-
-  const log = getAdminAuditLog()
-  log.push(newEntry)
-
-  // Bound at 10,000 entries
-  if (log.length > 10_000) {
-    log.splice(0, log.length - 10_000)
-  }
-
-  return newEntry
-}
-
-export interface AdminAuditQueryOptions {
-  action?: AdminAuditAction
-  actor?: string
-  target?: string
-  since?: string   // ISO 8601 timestamp
-  limit?: number   // default 100, max 1000
+function readAllEvents(): PassportAuditEvent[] {
+  if (!existsSync(AUDIT_FILE)) return []
+  const raw = readFileSync(AUDIT_FILE, "utf-8")
+  const lines = raw.split("\n").filter((l) => l.trim().length > 0)
+  return lines.map((line) => JSON.parse(line) as PassportAuditEvent)
 }
 
 /**
- * Returns admin audit entries newest-first, with optional filters.
+ * Append an event to the JSONL audit log.
+ * Maintains a cap of MAX_EVENTS by trimming oldest when exceeded.
  */
-export function listAdminAuditEntries(opts?: AdminAuditQueryOptions): AdminAuditEntry[] {
-  const log = getAdminAuditLog()
-  let entries = [...log]
-
-  if (opts?.action) {
-    entries = entries.filter(e => e.action === opts.action)
+export function appendAuditEvent(
+  event: Omit<PassportAuditEvent, "id" | "at"> & { id?: string; at?: string }
+): PassportAuditEvent {
+  const fullEvent: PassportAuditEvent = {
+    id: event.id || randomUUID(),
+    agentId: event.agentId,
+    type: event.type,
+    at: event.at || new Date().toISOString(),
+    amount: event.amount,
+    quoteId: event.quoteId,
+    reason: event.reason,
+    ok: event.ok,
   }
 
-  if (opts?.actor) {
-    const actor = opts.actor.toLowerCase().trim()
-    entries = entries.filter(e => e.actor.toLowerCase().trim() === actor)
+  ensureDataDir()
+  appendFileSync(AUDIT_FILE, JSON.stringify(fullEvent) + "\n")
+
+  // Enforce cap: if over limit, rewrite file with last N events
+  const all = readAllEvents()
+  if (all.length > MAX_EVENTS) {
+    const trimmed = all.slice(all.length - MAX_EVENTS)
+    const rewrite = trimmed.map((e) => JSON.stringify(e)).join("\n") + "\n"
+    const { writeFileSync } = require("node:fs")
+    writeFileSync(AUDIT_FILE, rewrite)
   }
 
-  if (opts?.target) {
-    const target = opts.target.toLowerCase().trim()
-    entries = entries.filter(e => e.target.toLowerCase().trim() === target)
-  }
+  return fullEvent
+}
 
-  if (opts?.since) {
-    const sinceMs = new Date(opts.since).getTime()
-    if (!Number.isNaN(sinceMs)) {
-      entries = entries.filter(e => e.timestamp >= sinceMs)
-    }
-  }
-
-  // Newest first
-  entries.reverse()
-
-  // Apply limit (default 100, max 1000)
-  const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 1000)
-  return entries.slice(0, limit)
+export interface AuditQueryOptions {
+  agentId: string
+  limit?: number // default 50
 }
 
 /**
- * Clears the admin audit store. For test isolation.
+ * Return last N events for an agent, newest-first.
  */
-export function resetAdminAuditStore(): void {
-  const log = getAdminAuditLog()
-  log.splice(0, log.length)
+export function listAuditEvents(opts: AuditQueryOptions): PassportAuditEvent[] {
+  const all = readAllEvents()
+  const filtered = all.filter((e) => e.agentId === opts.agentId)
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), MAX_EVENTS)
+  return filtered.slice(-limit).reverse()
+}
+
+/** For test isolation. */
+export function resetAuditFile(): void {
+  const { writeFileSync } = require("node:fs")
+  if (existsSync(AUDIT_FILE)) {
+    writeFileSync(AUDIT_FILE, "")
+  }
 }
