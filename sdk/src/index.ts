@@ -35,5 +35,7 @@ export {
   type Groth16Proof,
 } from "../bindings/src/index.js";
 
+export { PassportError, parsePassportError } from "./errors.js";
+
 export { PassportClient } from "./PassportClient.js";
 
