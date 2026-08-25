@@ -7,6 +7,7 @@
  * or `Uint8Array`), since that's exactly what snarkjs accepts.
  */
 import * as snarkjs from "snarkjs";
+import { validatePassportWitness } from "./validate.js";
 import type { Groth16Proof } from "../bindings/src/index.js";
 
 /** A snarkjs artifact: a path (Node), a URL (browser), or raw bytes. */
@@ -115,6 +116,10 @@ export async function generatePassportProof(
   witness: PassportWitness,
   artifacts: PassportArtifacts,
 ): Promise<SorobanProof> {
+  // Fail fast with a descriptive ValidationError instead of a cryptic
+  // circuit crash / prover hang when a field is out of range.
+  validatePassportWitness(witness);
+
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     witness,
     artifacts.wasm as any,
