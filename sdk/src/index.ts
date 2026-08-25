@@ -35,5 +35,17 @@ export {
   type Groth16Proof,
 } from "../bindings/src/index.js";
 
+export {
+  validatePassportWitness,
+  validateMerkleRootHex,
+  ValidationError,
+  MERKLE_TREE_DEPTH,
+  CIRCUIT_BALANCE_BITS,
+  SPEND_CAP_MAX,
+  AGENT_ID_MAX,
+  LEAF_INDEX_MAX,
+  FIELD_HEX_LENGTH,
+} from "./validate.js";
+
 export { PassportClient } from "./PassportClient.js";
 

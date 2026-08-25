@@ -66,3 +66,46 @@ node --loader ts-node/esm examples/register.ts   # full e2e (needs a funded key)
 ```
 
 MIT.
+
+
+## Input validation (before proving)
+
+`sdk/src/validate.ts` checks witness inputs BEFORE `snarkjs.groth16.fullProve`
+runs, so an out-of-range value throws a descriptive `ValidationError` (with the
+field name and the received value) instead of a cryptic circuit crash.
+
+`generatePassportProof()` calls it automatically. You can also use the helpers
+directly:
+
+```ts
+import { validatePassportWitness, validateMerkleRootHex } from "@open-stellar/agent-passport";
+
+validatePassportWitness({
+  agentId: "42",
+  spendCap: "1000",
+  registryRoot: "12345...",
+  pathIndices: "7",
+});
+
+// Contract-call form of the root:
+validateMerkleRootHex("0x" + "ab".repeat(32));
+```
+
+### Valid ranges
+
+Limits are exported as named constants so the SDK and any tooling share one
+source of truth (`sdk/src/validate.ts`). They mirror the circuit instantiation
+`AgentPassport(20, 128)` in `circuits/agent_passport.circom`.
+
+| Field          | Type            | Valid range                          | Error if violated                                   |
+| -------------- | --------------- | ------------------------------------ | --------------------------------------------------- |
+| `spendCap`     | decimal string  | `1` .. `SPEND_CAP_MAX` (`2^64 - 1`)  | `ValidationError[spendCap]`                         |
+| `agentId`      | decimal string  | `0` .. `AGENT_ID_MAX` (`2^32 - 1`)   | `ValidationError[agentId]`                          |
+| `registryRoot` | decimal string  | BN254 field element (`< 2^256`)      | `ValidationError[registryRoot]`                     |
+| `pathIndices`  | decimal string  | `0` .. `LEAF_INDEX_MAX` (`2^20 - 1`) | `ValidationError[leafIndex]`                        |
+| merkle root    | hex string      | 64 hex chars, optional `0x` prefix   | `ValidationError[merkleRoot]`                       |
+
+Note: the circuit itself would accept spend caps up to `2^128 - 1`
+(`balanceBits = 128`, see `CIRCUIT_BALANCE_BITS`). The SDK enforces the stricter
+`2^64` product bound on purpose; every accepted value is guaranteed to pass
+in-circuit.
