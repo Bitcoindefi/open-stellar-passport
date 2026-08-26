@@ -33,7 +33,7 @@
     "url": "https://github.com/leocagli/open-stellar-passport.git"
   },
   "devDependencies": {
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "typescript": "^7.0.2",
     "@types/node": "^26.1.1"
   }
