@@ -11,6 +11,8 @@ interface IssuanceBody {
   agentId?: unknown
   config?: unknown
   expiresAt?: unknown
+  metadata?: unknown
+  credentials?: unknown
 }
 
 function defaultExpiresAt(now: number): string {
@@ -81,7 +83,14 @@ export async function POST(req: Request) {
     }
 
     const actor = req.headers.get("x-stellar-address") || "admin"
-    const passport = issuePassport(body.id, body.agentId, actor, config, expiresAt)
+    const metadata =
+      typeof body.metadata === "object" && body.metadata !== null && !Array.isArray(body.metadata)
+        ? (body.metadata as Record<string, unknown>)
+        : undefined
+    const credentials = Array.isArray(body.credentials)
+      ? (body.credentials as import("@/lib/passport/passport").CredentialRecord[])
+      : undefined
+    const passport = issuePassport(body.id, body.agentId, actor, config, expiresAt, metadata, credentials)
 
     appendAdminAuditEntry({
       action: "grant",
