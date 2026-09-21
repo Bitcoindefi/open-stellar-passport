@@ -37,10 +37,7 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 function getDb(): SuspensionDb {
-  if (!globalState.__openStellarPassportSuspensionDb__) {
-    globalState.__openStellarPassportSuspensionDb__ = new Map()
-  }
-  return globalState.__openStellarPassportSuspensionDb__
+  return (globalState.__openStellarPassportSuspensionDb__ ??= new Map())
 }
 
 export function resetSuspensionStore(): void {
@@ -52,7 +49,7 @@ export function suspendPassport(
   reason: string,
   actor: string = "admin"
 ): SuspensionRecord {
-  if (!reason || !reason.trim()) {
+  if (!reason?.trim()) {
     throw new Error("Missing required field: 'reason'")
   }
 
@@ -99,7 +96,7 @@ export function unsuspendPassport(
   reason: string,
   actor: string = "admin"
 ): UnsuspensionRecord {
-  if (!reason || !reason.trim()) {
+  if (!reason?.trim()) {
     throw new Error("Missing required field: 'reason'")
   }
 
