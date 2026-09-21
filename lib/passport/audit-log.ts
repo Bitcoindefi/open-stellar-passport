@@ -6,6 +6,8 @@ export type AdminAuditAction =
   | "batch_verify"
   | "admin_transfer"
   | "verifier_change"
+  | "suspend"
+  | "unsuspend"
 
 export interface AdminAuditEntry {
   id: string                        // crypto.randomUUID()
