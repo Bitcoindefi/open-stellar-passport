@@ -187,3 +187,78 @@ export function buildUnsuspensionWebhookPayload(
     unsuspendedAt: record.unsuspendedAt,
   }
 }
+
+export type SuspensionAction = "suspend" | "unsuspend"
+
+export interface SuspensionRouteResult {
+  status: number
+  body: Record<string, unknown>
+}
+
+export async function executeSuspensionRoute(
+  req: Request,
+  context: { params: Promise<{ id: string }> },
+  action: SuspensionAction,
+): Promise<SuspensionRouteResult> {
+  try {
+    const { id } = await context.params
+    const passportId = decodeURIComponent(id)
+    const rawBody = (await req.json().catch(() => ({}))) as Record<string, unknown>
+
+    const reason = typeof rawBody.reason === "string" ? rawBody.reason.trim() : ""
+    if (!reason) {
+      return {
+        status: 400,
+        body: { ok: false, error: "Missing required field: 'reason'" },
+      }
+    }
+
+    const actor = req.headers.get("x-stellar-address") || "admin"
+
+    if (action === "suspend") {
+      const record = suspendPassport(passportId, reason, actor)
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          suspended: {
+            passportId: record.passportId,
+            reason: record.reason,
+            suspendedAt: record.suspendedAt,
+            status: "suspended",
+          },
+          webhookPayload: buildSuspensionWebhookPayload(record),
+        },
+      }
+    }
+
+    const record = unsuspendPassport(passportId, reason, actor)
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        unsuspended: {
+          passportId: record.passportId,
+          reason: record.reason,
+          unsuspendedAt: record.unsuspendedAt,
+          status: "active",
+        },
+        webhookPayload: buildUnsuspensionWebhookPayload(record),
+      },
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `Failed to ${action} passport`
+    const status =
+      message === "passport_not_found"
+        ? 404
+        : message === "cannot_suspend_revoked" ||
+          message === "cannot_unsuspend_revoked" ||
+          message === "cannot_unsuspend_expired"
+        ? 400
+        : 500
+    return {
+      status,
+      body: { ok: false, error: message },
+    }
+  }
+}

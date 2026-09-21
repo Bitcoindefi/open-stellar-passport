@@ -11,6 +11,7 @@ import {
   resetSuspensionStore,
   buildSuspensionWebhookPayload,
   buildUnsuspensionWebhookPayload,
+  executeSuspensionRoute,
 } from "@/lib/passport/suspension"
 import { listAuditEntries, resetAuditStore } from "@/lib/passport/audit"
 import { listAdminAuditEntries, resetAdminAuditStore } from "@/lib/passport/audit-log"
@@ -109,5 +110,100 @@ describe("passport suspension (temp hold)", () => {
     const whUnsuspension = buildUnsuspensionWebhookPayload(unsuspension)
     expect(whUnsuspension.type).toBe("passport.unsuspended")
     expect(whUnsuspension.passportId).toBe("pass-wh")
+  })
+
+  describe("executeSuspensionRoute route handler helper", () => {
+    it("returns 400 when reason is missing", async () => {
+      const req = new Request("http://localhost/api/protocol/passport/pass-route-1/suspend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      })
+      const res = await executeSuspensionRoute(
+        req,
+        { params: Promise.resolve({ id: "pass-route-1" }) },
+        "suspend"
+      )
+      expect(res.status).toBe(400)
+      expect(res.body.ok).toBe(false)
+      expect(res.body.error).toBe("Missing required field: 'reason'")
+    })
+
+    it("returns 404 when passport is not found", async () => {
+      const req = new Request("http://localhost/api/protocol/passport/nonexistent/suspend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Testing 404" }),
+      })
+      const res = await executeSuspensionRoute(
+        req,
+        { params: Promise.resolve({ id: "nonexistent" }) },
+        "suspend"
+      )
+      expect(res.status).toBe(404)
+      expect(res.body.ok).toBe(false)
+      expect(res.body.error).toBe("passport_not_found")
+    })
+
+    it("executes suspend and unsuspend route lifecycle successfully", async () => {
+      issuePassport("pass-route-2", "agent-route-2", "admin")
+
+      const suspendReq = new Request("http://localhost/api/protocol/passport/pass-route-2/suspend", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-stellar-address": "admin-stellar",
+        },
+        body: JSON.stringify({ reason: "Under investigation" }),
+      })
+      const suspendRes = await executeSuspensionRoute(
+        suspendReq,
+        { params: Promise.resolve({ id: "pass-route-2" }) },
+        "suspend"
+      )
+      expect(suspendRes.status).toBe(200)
+      expect(suspendRes.body.ok).toBe(true)
+      const suspendedData = suspendRes.body.suspended as Record<string, unknown>
+      expect(suspendedData.status).toBe("suspended")
+      expect(suspendedData.reason).toBe("Under investigation")
+
+      const unsuspendReq = new Request("http://localhost/api/protocol/passport/pass-route-2/unsuspend", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-stellar-address": "admin-stellar",
+        },
+        body: JSON.stringify({ reason: "Cleared of allegations" }),
+      })
+      const unsuspendRes = await executeSuspensionRoute(
+        unsuspendReq,
+        { params: Promise.resolve({ id: "pass-route-2" }) },
+        "unsuspend"
+      )
+      expect(unsuspendRes.status).toBe(200)
+      expect(unsuspendRes.body.ok).toBe(true)
+      const unsuspendedData = unsuspendRes.body.unsuspended as Record<string, unknown>
+      expect(unsuspendedData.status).toBe("active")
+      expect(unsuspendedData.reason).toBe("Cleared of allegations")
+    })
+
+    it("returns 400 when attempting to unsuspend a revoked passport via route", async () => {
+      issuePassport("pass-route-3", "agent-route-3", "admin")
+      revokePassport("pass-route-3", { reason: "policy_violation" }, "admin")
+
+      const req = new Request("http://localhost/api/protocol/passport/pass-route-3/unsuspend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Should fail" }),
+      })
+      const res = await executeSuspensionRoute(
+        req,
+        { params: Promise.resolve({ id: "pass-route-3" }) },
+        "unsuspend"
+      )
+      expect(res.status).toBe(400)
+      expect(res.body.ok).toBe(false)
+      expect(res.body.error).toBe("cannot_unsuspend_revoked")
+    })
   })
 })
