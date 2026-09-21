@@ -2,8 +2,8 @@
   "name": "open-stellar-passport-backend",
   "version": "0.1.0",
   "scripts": {
-    "dev": "ts-node-dev --respawn src/server.ts",
-    "build": "tsc",
+    "dev": "node init && ts-node-dev --respawn src/server.ts",
+    "build": "node init && tsc",
     "test": "jest --coverage",
     "test:watch": "jest --watch"
   },
