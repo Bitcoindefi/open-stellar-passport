@@ -7,13 +7,26 @@ export interface PassportConfig {
   allowTransfer: boolean
 }
 
+export interface CredentialRecord {
+  id?: string
+  type?: string
+  issuer?: string
+  issuedAt?: string
+  expiresAt?: string
+  ttlMs?: number
+  [key: string]: unknown
+}
+
 export interface PassportRecord {
   id: string
   agentId: string
   status: PassportStatus
   config: PassportConfig
   createdAt: string
+  issuedAt?: string
   expiresAt?: string | null
+  metadata?: Record<string, unknown>
+  credentials?: CredentialRecord[]
 }
 
 type PassportDb = Map<string, PassportRecord>
@@ -101,14 +114,20 @@ export function issuePassport(
   actor: string,
   config: PassportConfig = { allowTransfer: true },
   expiresAt?: string | null,
+  metadata?: Record<string, unknown>,
+  credentials?: CredentialRecord[],
 ): PassportRecord {
+  const now = new Date().toISOString()
   const record: PassportRecord = {
     id: normalizeId(id),
     agentId,
     status: "active",
     config,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
+    issuedAt: now,
     expiresAt,
+    metadata: metadata ? structuredClone(metadata) : {},
+    credentials: credentials ? structuredClone(credentials) : [],
   }
   setPassport(record)
   appendAuditEntry({
@@ -185,16 +204,93 @@ export function extendPassport(agentId: string, additionalDays: number, actor: s
   return record
 }
 
-export function clonePassport(id: string, newAgentId: string, actor: string, reason?: string): PassportRecord {
+export interface ClonePassportOptions {
+  newId?: string
+  newAgentId?: string
+  actor?: string
+  reason?: string
+}
+
+export function clonePassport(
+  id: string,
+  newAgentId?: string,
+  actor = "admin",
+  reason?: string,
+  options?: ClonePassportOptions,
+): PassportRecord {
   const record = getPassport(id)
   if (!record) throw new Error("passport_not_found")
+
+  const nowMs = Date.now()
+  const nowIso = new Date(nowMs).toISOString()
+
+  let targetId = options?.newId
+  if (!targetId || !targetId.trim()) {
+    const baseCloneId = `${record.id}-clone`
+    if (!getPassport(baseCloneId)) {
+      targetId = baseCloneId
+    } else {
+      targetId = `${record.id}-clone-${nowMs}`
+    }
+  }
+
+  const agentId = newAgentId?.trim() || options?.newAgentId?.trim() || record.agentId
+
+  // Recalculate passport expiresAt if present
+  let expiresAt: string | null | undefined = record.expiresAt
+  if (record.expiresAt) {
+    const sourceStart = record.issuedAt || record.createdAt
+    const sourceStartMs = sourceStart ? Date.parse(sourceStart) : Number.NaN
+    const sourceExpiryMs = Date.parse(record.expiresAt)
+    const ttlMs =
+      Number.isFinite(sourceStartMs) && Number.isFinite(sourceExpiryMs) && sourceExpiryMs > sourceStartMs
+        ? sourceExpiryMs - sourceStartMs
+        : 30 * 24 * 60 * 60 * 1000
+    expiresAt = new Date(nowMs + ttlMs).toISOString()
+  }
+
+  // Recalculate credentials with new expiry from now + original TTL
+  const credentials: CredentialRecord[] = (record.credentials || []).map((cred) => {
+    let ttlMs = 30 * 24 * 60 * 60 * 1000 // default 30 days
+    if (typeof cred.ttlMs === "number" && cred.ttlMs > 0) {
+      ttlMs = cred.ttlMs
+    } else if (
+      cred.expiresAt &&
+      cred.issuedAt &&
+      Number.isFinite(Date.parse(cred.expiresAt)) &&
+      Number.isFinite(Date.parse(cred.issuedAt))
+    ) {
+      const diff = Date.parse(cred.expiresAt) - Date.parse(cred.issuedAt)
+      if (diff > 0) ttlMs = diff
+    } else if (
+      cred.expiresAt &&
+      record.createdAt &&
+      Number.isFinite(Date.parse(cred.expiresAt)) &&
+      Number.isFinite(Date.parse(record.createdAt))
+    ) {
+      const diff = Date.parse(cred.expiresAt) - Date.parse(record.createdAt)
+      if (diff > 0) ttlMs = diff
+    }
+
+    return {
+      ...structuredClone(cred),
+      issuedAt: nowIso,
+      expiresAt: new Date(nowMs + ttlMs).toISOString(),
+    }
+  })
+
   const clonedRecord: PassportRecord = {
-    id: `${record.id}-clone`,
-    agentId: newAgentId,
+    id: normalizeId(targetId),
+    agentId,
     status: "active",
     config: { ...record.config },
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
+    issuedAt: nowIso,
+    expiresAt,
+    metadata: record.metadata ? structuredClone(record.metadata) : {},
+    credentials,
   }
+
   setPassport(clonedRecord)
   appendAuditEntry({
     passportId: record.id,
