@@ -9,7 +9,7 @@
     }
   },
   "scripts": {
-    "build": "node init && tsc"
+    "build": "tsc"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.0.1",
