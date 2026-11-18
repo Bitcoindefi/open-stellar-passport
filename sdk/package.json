@@ -15,7 +15,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "node init && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "example:register": "node --loader ts-node/esm examples/register.ts"
