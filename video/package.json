@@ -22,8 +22,8 @@
     "typescript": "5.9.3"
   },
   "scripts": {
-    "dev": "node init && remotion studio",
-    "build": "node init && remotion bundle",
+    "dev": "remotion studio",
+    "build": "remotion bundle",
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc"
   },
